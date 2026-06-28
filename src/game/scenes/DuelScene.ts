@@ -1,6 +1,5 @@
 import Phaser from 'phaser';
 import { GAME_W, GAME_H } from '../../config';
-import { COL } from '../../palette';
 import { Fighter } from '../fighter/Fighter';
 import { IDLE_POSE, SLASH_POSE } from '../fighter/Skeleton';
 import { GestureInput } from '../input/GestureInput';
@@ -11,6 +10,7 @@ import { resolveSlash, SlashInput, SlashResult } from '../../core/slash';
 import { Gore } from '../vfx/Gore';
 import { Hud } from '../ui/Hud';
 import { AIController } from '../ai/AIController';
+import { Forest } from '../background/Forest';
 
 const GROUND_Y = GAME_H - 96;
 const MOVE_SPEED = 0.28; // px per ms
@@ -22,6 +22,7 @@ export class DuelScene extends Phaser.Scene {
   private gore!: Gore;
   private hud!: Hud;
   private ai!: AIController;
+  private forest!: Forest;
   private playerFocus = new Focus();
   private keys!: Record<'left' | 'right', Phaser.Input.Keyboard.Key>;
   private busyUntil = 0;
@@ -34,10 +35,8 @@ export class DuelScene extends Phaser.Scene {
   }
 
   create() {
-    this.cameras.main.setBackgroundColor(COL.skyTop);
-    const g = this.add.graphics();
-    g.fillStyle(COL.forestShadow, 1).fillRect(0, GROUND_Y + 60, GAME_W, GAME_H - GROUND_Y);
-    g.fillStyle(COL.forestDark, 1).fillRect(0, GROUND_Y + 56, GAME_W, 6);
+    this.cameras.main.setBackgroundColor(0xbfd6c2);
+    this.forest = new Forest(this, GROUND_Y);
 
     this.player = new Fighter(this, GAME_W * 0.43, GROUND_Y, 1, { stance: 'balanced' });
     this.enemy = new Fighter(this, GAME_W * 0.57, GROUND_Y, -1, { stance: 'heavy' });
@@ -277,6 +276,7 @@ export class DuelScene extends Phaser.Scene {
     this.player.facing = this.enemy.x >= this.player.x ? 1 : -1;
     this.player.scaleX = this.player.facing;
 
+    this.forest.update(this.player.x);
     this.ai.update(delta);
     this.trail.update(delta);
     this.hud.update();
