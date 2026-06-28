@@ -1,0 +1,12 @@
+# deps / build
+node_modules/
+dist/
+
+# os
+.DS_Store
+
+# local study material — reference screenshots captured from the source videos (never shipped)
+reference/
+
+# internal session-handoff notes — kept local, not part of the product
+RESUME_HERE.md
