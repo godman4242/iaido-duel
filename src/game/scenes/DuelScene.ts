@@ -10,6 +10,7 @@ import { Focus } from '../../core/focus';
 import { resolveSlash, SlashInput, SlashResult } from '../../core/slash';
 import { Gore } from '../vfx/Gore';
 import { Hud } from '../ui/Hud';
+import { AIController } from '../ai/AIController';
 
 const GROUND_Y = GAME_H - 96;
 const MOVE_SPEED = 0.28; // px per ms
@@ -20,9 +21,11 @@ export class DuelScene extends Phaser.Scene {
   private trail!: BladeTrail;
   private gore!: Gore;
   private hud!: Hud;
+  private ai!: AIController;
   private playerFocus = new Focus();
   private keys!: Record<'left' | 'right', Phaser.Input.Keyboard.Key>;
   private busyUntil = 0;
+  private playerWindupUntil = 0;
 
   constructor() {
     super('Duel');
@@ -46,12 +49,20 @@ export class DuelScene extends Phaser.Scene {
       onStart: (p) => {
         this.trail.begin();
         this.trail.push(p);
+        this.playerWindupUntil = this.time.now + 360; // the AI can react to an incoming slash
       },
       onMove: (p) => this.trail.push(p),
       onEnd: (path, gesture) => {
         this.trail.end();
         this.handleGesture(path, gesture);
       },
+    });
+
+    this.ai = new AIController(this, {
+      self: this.enemy,
+      target: this.player,
+      onAttack: () => this.enemyStrike(),
+      isTargetWindup: () => this.time.now < this.playerWindupUntil,
     });
 
     const kb = this.input.keyboard!;
@@ -72,6 +83,20 @@ export class DuelScene extends Phaser.Scene {
       })
       .setOrigin(0.5)
       .setAlpha(0.7);
+
+    // dev hook for inspecting live state from the console
+    (window as unknown as { __duel?: DuelScene }).__duel = this;
+  }
+
+  /** Dev: snapshot of live combat state. */
+  debugState() {
+    return {
+      playerHP: this.player.health,
+      enemyHP: this.enemy.health,
+      focus: Math.round(this.playerFocus.value),
+      enemyState: this.ai.stateName(),
+      dist: Math.round(Math.abs(this.player.x - this.enemy.x)),
+    };
   }
 
   private cycleStance() {
@@ -137,6 +162,10 @@ export class DuelScene extends Phaser.Scene {
 
     const stance = STANCES[this.player.stanceId];
     if (Math.abs(this.enemy.x - this.player.swordHand().x) > stance.reach) return;
+    if (this.enemy.blocking) {
+      this.spark({ x: this.enemy.x, y: this.enemy.y - 46 });
+      return;
+    }
     const crit = this.playerFocus.isCrit();
     const base =
       this.player.atkPlusWeapon *
@@ -157,11 +186,39 @@ export class DuelScene extends Phaser.Scene {
   /** Apply a slash result to a fighter and spray blood / sever decals for each hit. */
   private applyAndSpray(target: Fighter, result: SlashResult) {
     if (!result.hits.length) return;
+    if (target.blocking) {
+      this.spark(result.hits[0].cutPoint);
+      return;
+    }
     target.applyHit(result);
     for (const h of result.hits) {
       this.gore.spray(h.cutPoint, h.severed ? 16 : 7);
       if (h.severed) this.gore.severDecal(h.cutPoint);
     }
+  }
+
+  /** The enemy's strike at the player (a heavy lunge); misses if the player retreated out of reach. */
+  private enemyStrike() {
+    const stance = STANCES[this.enemy.stanceId];
+    if (Math.abs(this.player.x - this.enemy.x) > stance.reach + 30) return;
+    const base = this.enemy.atkPlusWeapon * stance.dmgMult * counterBonus(this.enemy.stanceId, this.player.stanceId);
+    const dmg = Math.round(base * STANCES[this.player.stanceId].damageTakenMult);
+    this.player.health = Math.max(0, this.player.health - dmg);
+    this.player.redraw();
+    this.gore.spray({ x: this.player.x, y: this.player.y - 46 }, 9);
+  }
+
+  /** A short white block-clink flash. */
+  private spark(at: { x: number; y: number }) {
+    const s = this.add.graphics().setDepth(70);
+    s.fillStyle(0xffffff, 1).fillCircle(at.x, at.y, 6);
+    this.tweens.add({
+      targets: s,
+      scale: 2.4,
+      alpha: 0,
+      duration: 180,
+      onComplete: () => s.destroy(),
+    });
   }
 
   update(_time: number, delta: number) {
@@ -175,6 +232,7 @@ export class DuelScene extends Phaser.Scene {
     this.player.facing = this.enemy.x >= this.player.x ? 1 : -1;
     this.player.scaleX = this.player.facing;
 
+    this.ai.update(delta);
     this.trail.update(delta);
     this.hud.update();
   }

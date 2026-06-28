@@ -19,6 +19,7 @@ export class Fighter extends Phaser.GameObjects.Container {
   atkPlusWeapon: number;
   pose: Pose = IDLE_POSE;
   severed = new Set<string>();
+  blocking = false;
   private gfx: Phaser.GameObjects.Graphics;
 
   constructor(scene: Phaser.Scene, x: number, y: number, facing: 1 | -1, opts: FighterOpts = {}) {
