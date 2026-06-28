@@ -5,10 +5,11 @@ import { Fighter } from '../fighter/Fighter';
 import { IDLE_POSE, SLASH_POSE } from '../fighter/Skeleton';
 import { GestureInput } from '../input/GestureInput';
 import { BladeTrail } from '../vfx/BladeTrail';
-import { STANCES, counterBonus } from '../../core/stance';
+import { STANCES, counterBonus, StanceId } from '../../core/stance';
 import { Focus } from '../../core/focus';
 import { resolveSlash, SlashInput, SlashResult } from '../../core/slash';
 import { Gore } from '../vfx/Gore';
+import { Hud } from '../ui/Hud';
 
 const GROUND_Y = GAME_H - 96;
 const MOVE_SPEED = 0.28; // px per ms
@@ -18,9 +19,9 @@ export class DuelScene extends Phaser.Scene {
   private enemy!: Fighter;
   private trail!: BladeTrail;
   private gore!: Gore;
+  private hud!: Hud;
   private playerFocus = new Focus();
   private keys!: Record<'left' | 'right', Phaser.Input.Keyboard.Key>;
-  private hpText!: Phaser.GameObjects.Text;
   private busyUntil = 0;
 
   constructor() {
@@ -35,10 +36,11 @@ export class DuelScene extends Phaser.Scene {
 
     this.player = new Fighter(this, GAME_W * 0.43, GROUND_Y, 1, { stance: 'balanced' });
     this.enemy = new Fighter(this, GAME_W * 0.57, GROUND_Y, -1, { stance: 'heavy' });
-    this.playerFocus.gain(100); // start ready to crit for testing; tuned later
 
     this.trail = new BladeTrail(this);
     this.gore = new Gore(this);
+    this.hud = new Hud(this, { player: this.player, enemy: this.enemy, focus: this.playerFocus });
+    this.playerFocus.gain(50); // start with enough Focus to switch once; builds from hits (tunable)
 
     new GestureInput(this, {
       onStart: (p) => {
@@ -60,10 +62,24 @@ export class DuelScene extends Phaser.Scene {
     kb.on('keydown-B', () => {
       Gore.reduced = !Gore.reduced;
     });
+    kb.on('keydown-SPACE', () => this.cycleStance());
 
-    this.hpText = this.add
-      .text(GAME_W / 2, 24, '', { fontFamily: 'monospace', fontSize: '16px', color: '#efedc2' })
-      .setOrigin(0.5);
+    this.add
+      .text(GAME_W / 2, 22, 'A/D move   ·   draw across to slash   ·   SPACE switch stance', {
+        fontFamily: 'monospace',
+        fontSize: '13px',
+        color: '#d8dbf1',
+      })
+      .setOrigin(0.5)
+      .setAlpha(0.7);
+  }
+
+  private cycleStance() {
+    if (!this.playerFocus.canSwitch()) return;
+    this.playerFocus.spendSwitch();
+    const order: StanceId[] = ['light', 'balanced', 'heavy'];
+    const i = order.indexOf(this.player.stanceId);
+    this.player.stanceId = order[(i + 1) % order.length];
   }
 
   private doSlash(path: { x: number; y: number }[]) {
@@ -88,6 +104,10 @@ export class DuelScene extends Phaser.Scene {
       STANCES[this.enemy.stanceId].damageTakenMult,
     );
     this.applyAndSpray(this.enemy, result);
+    if (result.hits.length) {
+      const severed = result.hits.filter((h) => h.severed).length;
+      this.playerFocus.gain(16 + severed * 10);
+    }
   }
 
   /** Apply a slash result to a fighter and spray blood / sever decals for each hit. */
@@ -112,8 +132,6 @@ export class DuelScene extends Phaser.Scene {
     this.player.scaleX = this.player.facing;
 
     this.trail.update(delta);
-    this.hpText.setText(
-      `enemy HP ${this.enemy.health}/${this.enemy.maxHealth}   [A/D move, draw across to slash]`,
-    );
+    this.hud.update();
   }
 }
