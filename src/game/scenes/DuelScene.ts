@@ -50,7 +50,7 @@ export class DuelScene extends Phaser.Scene {
       onMove: (p) => this.trail.push(p),
       onEnd: (path, gesture) => {
         this.trail.end();
-        if (gesture === 'slash') this.doSlash(path);
+        this.handleGesture(path, gesture);
       },
     });
 
@@ -107,6 +107,50 @@ export class DuelScene extends Phaser.Scene {
     if (result.hits.length) {
       const severed = result.hits.filter((h) => h.severed).length;
       this.playerFocus.gain(16 + severed * 10);
+    }
+  }
+
+  private handleGesture(path: { x: number; y: number }[], gesture: string) {
+    if (this.time.now < this.busyUntil) return;
+    switch (gesture) {
+      case 'slash':
+        this.doSlash(path);
+        break;
+      case 'jump':
+        this.busyUntil = this.time.now + 480;
+        this.tweens.add({ targets: this.player, y: GROUND_Y - 95, duration: 230, yoyo: true, ease: 'Quad.easeOut' });
+        break;
+      case 'launch':
+        this.dealSpecial(0.9, 130);
+        break;
+      case 'stab':
+        this.dealSpecial(1.45, 0);
+        break;
+    }
+  }
+
+  /** A close-range special move (launch / stab): connects if the enemy is within reach. */
+  private dealSpecial(mult: number, knockUp: number) {
+    this.busyUntil = this.time.now + 320;
+    this.player.setPose(SLASH_POSE);
+    this.time.delayedCall(150, () => this.player.setPose(IDLE_POSE));
+
+    const stance = STANCES[this.player.stanceId];
+    if (Math.abs(this.enemy.x - this.player.swordHand().x) > stance.reach) return;
+    const crit = this.playerFocus.isCrit();
+    const base =
+      this.player.atkPlusWeapon *
+      stance.dmgMult *
+      mult *
+      (crit ? 1.3 : 1) *
+      counterBonus(this.player.stanceId, this.enemy.stanceId);
+    const dmg = Math.round(base * STANCES[this.enemy.stanceId].damageTakenMult);
+    this.enemy.health = Math.max(0, this.enemy.health - dmg);
+    this.enemy.redraw();
+    this.gore.spray({ x: this.enemy.x, y: this.enemy.y - 46 }, 9);
+    this.playerFocus.gain(14);
+    if (knockUp > 0) {
+      this.tweens.add({ targets: this.enemy, y: this.enemy.y - knockUp, duration: 240, yoyo: true, ease: 'Quad.easeOut' });
     }
   }
 
