@@ -7,7 +7,8 @@ import { GestureInput } from '../input/GestureInput';
 import { BladeTrail } from '../vfx/BladeTrail';
 import { STANCES, counterBonus } from '../../core/stance';
 import { Focus } from '../../core/focus';
-import { resolveSlash, SlashInput } from '../../core/slash';
+import { resolveSlash, SlashInput, SlashResult } from '../../core/slash';
+import { Gore } from '../vfx/Gore';
 
 const GROUND_Y = GAME_H - 96;
 const MOVE_SPEED = 0.28; // px per ms
@@ -16,6 +17,7 @@ export class DuelScene extends Phaser.Scene {
   private player!: Fighter;
   private enemy!: Fighter;
   private trail!: BladeTrail;
+  private gore!: Gore;
   private playerFocus = new Focus();
   private keys!: Record<'left' | 'right', Phaser.Input.Keyboard.Key>;
   private hpText!: Phaser.GameObjects.Text;
@@ -36,6 +38,7 @@ export class DuelScene extends Phaser.Scene {
     this.playerFocus.gain(100); // start ready to crit for testing; tuned later
 
     this.trail = new BladeTrail(this);
+    this.gore = new Gore(this);
 
     new GestureInput(this, {
       onStart: (p) => {
@@ -54,6 +57,9 @@ export class DuelScene extends Phaser.Scene {
       left: kb.addKey(Phaser.Input.Keyboard.KeyCodes.A),
       right: kb.addKey(Phaser.Input.Keyboard.KeyCodes.D),
     };
+    kb.on('keydown-B', () => {
+      Gore.reduced = !Gore.reduced;
+    });
 
     this.hpText = this.add
       .text(GAME_W / 2, 24, '', { fontFamily: 'monospace', fontSize: '16px', color: '#efedc2' })
@@ -81,7 +87,17 @@ export class DuelScene extends Phaser.Scene {
       this.player.atkPlusWeapon,
       STANCES[this.enemy.stanceId].damageTakenMult,
     );
-    if (result.hits.length) this.enemy.applyHit(result);
+    this.applyAndSpray(this.enemy, result);
+  }
+
+  /** Apply a slash result to a fighter and spray blood / sever decals for each hit. */
+  private applyAndSpray(target: Fighter, result: SlashResult) {
+    if (!result.hits.length) return;
+    target.applyHit(result);
+    for (const h of result.hits) {
+      this.gore.spray(h.cutPoint, h.severed ? 16 : 7);
+      if (h.severed) this.gore.severDecal(h.cutPoint);
+    }
   }
 
   update(_time: number, delta: number) {
