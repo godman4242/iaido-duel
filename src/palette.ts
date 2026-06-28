@@ -21,4 +21,8 @@ export const COL = {
   gold: 0xe8a83a,
   healthGreen: 0x5bbf2e,
   focusBlue: 0x3a7fd5,
+  skin: 0xe6c2a0,
+  skinShade: 0xc79b76,
+  blade: 0xcfd6da,
+  bladeEdge: 0xeef3f6,
 } as const;
