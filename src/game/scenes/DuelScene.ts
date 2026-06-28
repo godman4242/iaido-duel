@@ -26,6 +26,8 @@ export class DuelScene extends Phaser.Scene {
   private keys!: Record<'left' | 'right', Phaser.Input.Keyboard.Key>;
   private busyUntil = 0;
   private playerWindupUntil = 0;
+  private over = false;
+  private graceUntil = 0;
 
   constructor() {
     super('Duel');
@@ -44,6 +46,13 @@ export class DuelScene extends Phaser.Scene {
     this.gore = new Gore(this);
     this.hud = new Hud(this, { player: this.player, enemy: this.enemy, focus: this.playerFocus });
     this.playerFocus.gain(50); // start with enough Focus to switch once; builds from hits (tunable)
+
+    // spawn grace: both fighters invulnerable + blinking briefly at the start of the duel
+    this.over = false;
+    this.graceUntil = this.time.now + 1500;
+    for (const f of [this.player, this.enemy]) {
+      this.tweens.add({ targets: f, alpha: 0.35, duration: 150, yoyo: true, repeat: 4 });
+    }
 
     new GestureInput(this, {
       onStart: (p) => {
@@ -74,6 +83,7 @@ export class DuelScene extends Phaser.Scene {
       Gore.reduced = !Gore.reduced;
     });
     kb.on('keydown-SPACE', () => this.cycleStance());
+    kb.on('keydown-R', () => this.scene.restart());
 
     this.add
       .text(GAME_W / 2, 22, 'A/D move   ·   draw across to slash   ·   SPACE switch stance', {
@@ -135,8 +145,31 @@ export class DuelScene extends Phaser.Scene {
     }
   }
 
+  private endDuel(playerWon: boolean) {
+    this.over = true;
+    const cx = GAME_W / 2;
+    this.add
+      .text(cx, 210, playerWon ? 'VICTORY' : 'DEFEAT', {
+        fontFamily: 'serif',
+        fontSize: '64px',
+        color: playerWon ? '#efedc2' : '#a50103',
+        stroke: '#040304',
+        strokeThickness: 6,
+      })
+      .setOrigin(0.5)
+      .setDepth(200);
+    this.add
+      .text(cx, 270, 'press R to duel again', {
+        fontFamily: 'monospace',
+        fontSize: '18px',
+        color: '#efedc2',
+      })
+      .setOrigin(0.5)
+      .setDepth(200);
+  }
+
   private handleGesture(path: { x: number; y: number }[], gesture: string) {
-    if (this.time.now < this.busyUntil) return;
+    if (this.over || this.time.now < this.busyUntil) return;
     switch (gesture) {
       case 'slash':
         this.doSlash(path);
@@ -183,10 +216,14 @@ export class DuelScene extends Phaser.Scene {
     }
   }
 
+  private inGrace() {
+    return this.time.now < this.graceUntil;
+  }
+
   /** Apply a slash result to a fighter and spray blood / sever decals for each hit. */
   private applyAndSpray(target: Fighter, result: SlashResult) {
     if (!result.hits.length) return;
-    if (target.blocking) {
+    if (target.blocking || this.inGrace()) {
       this.spark(result.hits[0].cutPoint);
       return;
     }
@@ -199,6 +236,7 @@ export class DuelScene extends Phaser.Scene {
 
   /** The enemy's strike at the player (a heavy lunge); misses if the player retreated out of reach. */
   private enemyStrike() {
+    if (this.over || this.inGrace()) return;
     const stance = STANCES[this.enemy.stanceId];
     if (Math.abs(this.player.x - this.enemy.x) > stance.reach + 30) return;
     const base = this.enemy.atkPlusWeapon * stance.dmgMult * counterBonus(this.enemy.stanceId, this.player.stanceId);
@@ -222,6 +260,13 @@ export class DuelScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number) {
+    if (this.over) {
+      this.hud.update();
+      return;
+    }
+    if (this.enemy.isDead) return this.endDuel(true);
+    if (this.player.isDead) return this.endDuel(false);
+
     // lateral movement to close/open distance
     let dir = 0;
     if (this.keys.left.isDown) dir -= 1;
