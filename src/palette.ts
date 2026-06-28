@@ -1,0 +1,24 @@
+// Exact eyedropped fidelity targets from the reference pack (0xRRGGBB).
+// These are OUR palette for OUR re-created art — see docs/superpowers/specs.
+export const COL = {
+  skyTop: 0xd8dbf1,
+  skyLow: 0xeceffe,
+  forestBright: 0x49a431,
+  forestMid: 0x2e922e,
+  forestMid2: 0x31a030,
+  forestShadow: 0x1d7330,
+  forestDark: 0x173012,
+  sage: 0x62905e,
+  sage2: 0x78a760,
+  kimono: 0xe8f3ef,
+  kimono2: 0xe9eddb,
+  kimonoShade: 0xdadfc3,
+  wood: 0x794702,
+  outline: 0x040304,
+  blood: 0xa50103,
+  bloodDark: 0x950202,
+  cream: 0xefedc2,
+  gold: 0xe8a83a,
+  healthGreen: 0x5bbf2e,
+  focusBlue: 0x3a7fd5,
+} as const;
