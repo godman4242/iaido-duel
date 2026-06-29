@@ -61,6 +61,8 @@ export class DuelScene extends Phaser.Scene {
     this.trail = new BladeTrail(this);
     this.gore = new Gore(this);
     this.hud = new Hud(this, { player: this.player, enemy: this.enemy, focus: this.playerFocus });
+    // reset Focus on restart (scene instance is reused)
+    this.playerFocus.value = 0;
     this.playerFocus.gain(50); // start with enough Focus to switch once; builds from hits (tunable)
 
     // spawn grace: both fighters invulnerable + blinking briefly at the start of the duel
@@ -160,7 +162,7 @@ export class DuelScene extends Phaser.Scene {
     const stance = STANCES[this.player.stanceId];
     const input: SlashInput = {
       path,
-      origin: this.player.swordHand(),
+      origin: this.player.slashOrigin(),
       reach: stance.reach,
       dmgMult: stance.dmgMult,
       crit: this.playerFocus.isCrit(),
@@ -220,7 +222,7 @@ export class DuelScene extends Phaser.Scene {
     playSlash();
 
     const stance = STANCES[this.player.stanceId];
-    if (Math.abs(this.enemy.x - this.player.swordHand().x) > stance.reach) return;
+    if (Math.abs(this.enemy.x - this.player.slashOrigin().x) > stance.reach) return;
     if (this.enemy.blocking) {
       this.spark({ x: this.enemy.x, y: this.enemy.y - 46 });
       return;

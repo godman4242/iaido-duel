@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { Limb, SlashResult } from '../../core/slash';
 import { StanceId } from '../../core/stance';
-import { IDLE_POSE, Pose, worldLimbs } from './Skeleton';
+import { IDLE_POSE, SLASH_POSE, Pose, worldLimbs } from './Skeleton';
 import { FighterAnimator, GuardLevel } from './FighterAnimator';
 import { drawSkeleton, Skin } from './drawFighter';
 
@@ -49,6 +49,11 @@ export class Fighter extends Phaser.GameObjects.Container {
   /** Sword-hand world position (slash origin). */
   swordHand(): { x: number; y: number } {
     return { x: this.x + this.facing * this.pose.handF.x, y: this.y + this.pose.handF.y };
+  }
+
+  /** World-space reach origin for slash gating: the EXTENDED sword hand, independent of the animated pose. */
+  slashOrigin(): { x: number; y: number } {
+    return { x: this.x + this.facing * SLASH_POSE.handF.x, y: this.y + SLASH_POSE.handF.y };
   }
 
   setPose(pose: Pose): void {
