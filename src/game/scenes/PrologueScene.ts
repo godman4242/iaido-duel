@@ -159,6 +159,7 @@ export class PrologueScene extends Phaser.Scene {
    */
   private nextBeat(): void {
     if (this.inputLocked) return;
+    this.inputLocked = true;
     this.beatIndex++;
 
     switch (this.beatIndex) {
@@ -247,12 +248,12 @@ export class PrologueScene extends Phaser.Scene {
       ease: 'Sine.easeInOut',
       onComplete: () => {
         for (const obj of this.narrationLayer) {
+          this.tweens.killTweensOf(obj);
           obj.destroy();
         }
         this.narrationLayer = [];
         overlay.destroy();
         this.cameras.main.setBackgroundColor(0xffffff);
-        this.inputLocked = false;
         this.renderCard();
       },
     });
@@ -285,6 +286,8 @@ export class PrologueScene extends Phaser.Scene {
       duration: 500,
       ease: 'Sine.easeIn',
     });
+
+    this.time.delayedCall(80, () => { this.inputLocked = false; });
   }
 
   /**
@@ -295,6 +298,7 @@ export class PrologueScene extends Phaser.Scene {
   private renderEnso(): void {
     // Clear card-beat objects.
     for (const obj of this.beatLayer) {
+      this.tweens.killTweensOf(obj);
       obj.destroy();
     }
     this.beatLayer = [];
@@ -351,6 +355,8 @@ export class PrologueScene extends Phaser.Scene {
         ease: 'Sine.easeIn',
       });
     }
+
+    this.time.delayedCall(80, () => { this.inputLocked = false; });
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
