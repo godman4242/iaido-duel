@@ -88,7 +88,7 @@ export class TitleScene extends Phaser.Scene {
     this.woodenButton(panelCX, panelTopY, BTN_W, BTN_H, 'NEW GAME', true, () => {
       const s = createNewGame();
       saveGame(s);
-      this.scene.start('Town', { state: s });
+      this.scene.start('Prologue', { state: s });
     });
 
     this.woodenButton(

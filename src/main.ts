@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { GAME_W, GAME_H, DEV } from './config';
 import { BootScene } from './game/scenes/BootScene';
 import { TitleScene } from './game/scenes/TitleScene';
+import { PrologueScene } from './game/scenes/PrologueScene';
 import { TownScene } from './game/scenes/TownScene';
 import { DuelScene } from './game/scenes/DuelScene';
 
@@ -11,7 +12,7 @@ new Phaser.Game({
   width: GAME_W,
   height: GAME_H,
   backgroundColor: '#0d0d0d',
-  scene: [BootScene, TitleScene, TownScene, DuelScene],
+  scene: [BootScene, TitleScene, PrologueScene, TownScene, DuelScene],
   render: { antialias: true, roundPixels: false },
 });
 
