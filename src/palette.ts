@@ -10,9 +10,17 @@ export const COL = {
   forestDark: 0x173012,
   sage: 0x62905e,
   sage2: 0x78a760,
-  kimono: 0xe8f3ef,
+  kimono: 0xf4f3ec, // brighter off-white
   kimono2: 0xe9eddb,
-  kimonoShade: 0xdadfc3,
+  kimonoShade: 0xccd0c6, // cool grey fold shadow (cel second tone)
+  haori: 0x2b3b5e, // navy hooded jacket
+  haoriShade: 0x1a2742,
+  haoriTrim: 0xb5392f, // red inner lining accent
+  obi: 0xd9a93a, // gold sash
+  obiShade: 0xa97c22,
+  hair: 0x241f1b,
+  hatStraw: 0xbb9450, // tan woven kasa
+  hatShade: 0x7c5c28,
   wood: 0x794702,
   outline: 0x040304,
   blood: 0xa50103,
