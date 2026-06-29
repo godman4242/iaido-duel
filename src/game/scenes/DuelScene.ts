@@ -13,6 +13,7 @@ import { Gore } from '../vfx/Gore';
 import { Hud } from '../ui/Hud';
 import { AIController } from '../ai/AIController';
 import { Forest } from '../background/Forest';
+import { playSlash, playImpact, playStanceSwitch, playGrunt, resumeAudio, toggleMuted } from '../audio/sfx';
 
 const GROUND_Y = GAME_H - 96;
 const MOVE_SPEED = 0.28; // px per ms
@@ -60,6 +61,7 @@ export class DuelScene extends Phaser.Scene {
 
     new GestureInput(this, {
       onStart: (p) => {
+        resumeAudio();
         this.trail.begin();
         this.trail.push(p);
         this.playerWindupUntil = this.time.now + 360; // the AI can react to an incoming slash
@@ -88,6 +90,8 @@ export class DuelScene extends Phaser.Scene {
     });
     kb.on('keydown-SPACE', () => this.cycleStance());
     kb.on('keydown-R', () => this.scene.restart());
+    kb.on('keydown-M', () => toggleMuted());
+    kb.once('keydown', () => resumeAudio());
 
     this.add
       .text(GAME_W / 2, 22, 'A/D move   ·   draw across to slash   ·   SPACE switch stance', {
@@ -114,11 +118,12 @@ export class DuelScene extends Phaser.Scene {
   }
 
   private cycleStance() {
-    if (!this.playerFocus.canSwitch()) return;
+    if (this.over || !this.playerFocus.canSwitch()) return;
     this.playerFocus.spendSwitch();
     const order: StanceId[] = ['light', 'balanced', 'heavy'];
     const i = order.indexOf(this.player.stanceId);
     this.player.stanceId = order[(i + 1) % order.length];
+    playStanceSwitch();
   }
 
   private doSlash(path: { x: number; y: number }[]) {
@@ -142,8 +147,10 @@ export class DuelScene extends Phaser.Scene {
       this.player.atkPlusWeapon,
       STANCES[this.enemy.stanceId].damageTakenMult,
     );
+    playSlash();
     this.applyAndSpray(this.enemy, result);
-    if (result.hits.length) {
+    if (result.hits.length && !this.enemy.blocking && !this.inGrace()) {
+      playImpact();
       const severed = result.hits.filter((h) => h.severed).length;
       this.playerFocus.gain(16 + severed * 10);
     }
@@ -229,6 +236,7 @@ export class DuelScene extends Phaser.Scene {
     this.busyUntil = this.time.now + 320;
     this.player.setPose(SLASH_POSE);
     this.time.delayedCall(150, () => this.player.setPose(IDLE_POSE));
+    playSlash();
 
     const stance = STANCES[this.player.stanceId];
     if (Math.abs(this.enemy.x - this.player.swordHand().x) > stance.reach) return;
@@ -247,6 +255,7 @@ export class DuelScene extends Phaser.Scene {
     this.enemy.health = Math.max(0, this.enemy.health - dmg);
     this.enemy.redraw();
     this.gore.spray({ x: this.enemy.x, y: this.enemy.y - 46 }, 9);
+    playImpact();
     this.playerFocus.gain(14);
     if (knockUp > 0) {
       this.tweens.add({ targets: this.enemy, y: this.enemy.y - knockUp, duration: 240, yoyo: true, ease: 'Quad.easeOut' });
@@ -281,6 +290,8 @@ export class DuelScene extends Phaser.Scene {
     this.player.health = Math.max(0, this.player.health - dmg);
     this.player.redraw();
     this.gore.spray({ x: this.player.x, y: this.player.y - 46 }, 9);
+    playImpact();
+    playGrunt();
   }
 
   /** A short white block-clink flash. */
