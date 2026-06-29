@@ -1,6 +1,7 @@
 import { Pt } from '../../core/vec';
 import { Capsule } from '../../core/geometry';
 import { Limb } from '../../core/slash';
+import { Offsets } from '../../core/anim';
 
 export type Joint =
   | 'hat'
@@ -76,3 +77,72 @@ export function worldLimbs(pose: Pose, root: Pt, facing: 1 | -1, radius = 9): Li
     { id: 'legB', capsule: cap(pose.hipB, pose.footB, radius + 1, root, f), severThreshold: 18 },
   ];
 }
+
+// Blade drawn up-and-back over the shoulder — the slash wind-up / enemy "tell".
+export const SLASH_WINDUP: Pose = {
+  ...IDLE_POSE,
+  shoulderF: { x: 4, y: -62 },
+  elbowF: { x: 2, y: -80 },
+  handF: { x: -14, y: -70 },
+  sword: { x: -48, y: -94 },
+};
+
+// Blade swept down across the front — the follow-through.
+export const SLASH_FOLLOW: Pose = {
+  ...IDLE_POSE,
+  shoulderF: { x: 8, y: -54 },
+  elbowF: { x: 34, y: -42 },
+  handF: { x: 60, y: -6 },
+  sword: { x: 106, y: 42 },
+};
+
+// Sword raised horizontal in front — a defensive guard (block).
+export const GUARD_POSE: Pose = {
+  ...IDLE_POSE,
+  shoulderF: { x: 6, y: -60 },
+  elbowF: { x: 24, y: -58 },
+  handF: { x: 38, y: -52 },
+  sword: { x: 92, y: -58 },
+};
+
+// Torso/head knocked back away from the strike.
+export const HIT_RECOIL: Pose = {
+  ...IDLE_POSE,
+  chest: { x: -4, y: -44 },
+  neck: { x: -6, y: -68 },
+  head: { x: -7, y: -83 },
+  hat: { x: -5, y: -101 },
+  shoulderF: { x: 2, y: -56 },
+  elbowF: { x: 16, y: -36 },
+  handF: { x: 18, y: -14 },
+  sword: { x: 60, y: -30 },
+};
+
+// Collapsed on the ground (the loser falls). Body laid back along the ground, low.
+export const DEAD: Pose = {
+  pelvis: { x: 0, y: 0 },
+  chest: { x: -28, y: -10 },
+  neck: { x: -48, y: -12 },
+  head: { x: -62, y: -10 },
+  hat: { x: -80, y: -6 },
+  shoulderF: { x: -26, y: -16 },
+  elbowF: { x: -40, y: -6 },
+  handF: { x: -52, y: 2 },
+  sword: { x: -90, y: 6 },
+  hipF: { x: 8, y: 2 },
+  kneeF: { x: 32, y: 6 },
+  footF: { x: 56, y: 8 },
+  hipB: { x: -6, y: 2 },
+  kneeB: { x: -20, y: 8 },
+  footB: { x: -42, y: 10 },
+};
+
+/** Add per-joint offsets to a pose (joints absent from `offs` are copied unchanged). */
+export const addOffsets = (pose: Pose, offs: Offsets): Pose => {
+  const out = {} as Pose;
+  (Object.keys(pose) as Joint[]).forEach((k) => {
+    const o = offs[k];
+    out[k] = o ? { x: pose[k].x + o.x, y: pose[k].y + o.y } : { x: pose[k].x, y: pose[k].y };
+  });
+  return out;
+};
