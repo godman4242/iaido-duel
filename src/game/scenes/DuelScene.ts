@@ -1,10 +1,8 @@
 import Phaser from 'phaser';
 import { GAME_W, GAME_H } from '../../config';
-import { COL } from '../../palette';
 import { Fighter } from '../fighter/Fighter';
-import { SLASH_FOLLOW } from '../fighter/Skeleton';
-import { drawSkeleton } from '../fighter/drawFighter';
 import { GestureInput } from '../input/GestureInput';
+import { KillBeat } from './KillBeat';
 import { BladeTrail } from '../vfx/BladeTrail';
 import { STANCES, counterBonus, StanceId } from '../../core/stance';
 import { Focus } from '../../core/focus';
@@ -167,60 +165,14 @@ export class DuelScene extends Phaser.Scene {
     }
   }
 
-  /** The killing-blow beat: white flash + camera punch + a held moment, then the win screen. */
+  /** Killing-blow beat: the loser collapses, then a fast red wash + running silhouette (matches the source). */
   private onKill(playerWon: boolean) {
     if (this.finishing) return;
     this.finishing = true;
     this.over = true;
-    const flash = this.add.graphics().setDepth(180);
-    flash.fillStyle(0xffffff, 0.85).fillRect(0, 0, GAME_W, GAME_H);
-    this.tweens.add({ targets: flash, alpha: 0, duration: 280, onComplete: () => flash.destroy() });
-    this.cameras.main.zoomTo(1.09, 220, 'Quad.easeOut');
-    this.time.delayedCall(560, () => {
-      this.cameras.main.setZoom(1);
-      this.endDuel(playerWon);
-    });
-  }
-
-  private endDuel(playerWon: boolean) {
-    this.over = true;
-    const cx = GAME_W / 2;
-
-    // full red wash with a darker ground band (the original's kill-screen beat)
-    const wash = this.add.graphics().setDepth(190);
-    wash.fillStyle(playerWon ? COL.winRed : 0x1d2127, 1).fillRect(0, 0, GAME_W, GAME_H);
-    wash.fillStyle(playerWon ? COL.winRedDeep : 0x0f1216, 1).fillRect(0, GAME_H * 0.64, GAME_W, GAME_H);
-
-    // fallen foe — a dark heap at the victor's feet
-    const heap = this.add.graphics().setDepth(191).setPosition(cx + 120, GAME_H * 0.7);
-    heap.fillStyle(COL.outline, 1);
-    heap.fillEllipse(0, 18, 150, 34);
-    heap.fillEllipse(-60, 4, 60, 26);
-
-    // victor silhouette, mid-flourish
-    const sil = this.add.graphics().setDepth(192).setPosition(cx - 40, GAME_H * 0.72).setScale(1.7);
-    drawSkeleton(sil, SLASH_FOLLOW, { severed: new Set(), silhouette: true });
-
-    this.add
-      .text(cx, 130, playerWon ? 'YOU WIN' : 'YOU LOSE', {
-        fontFamily: 'Georgia, "Times New Roman", serif',
-        fontStyle: 'bold italic',
-        fontSize: '78px',
-        color: '#f4efe2',
-        stroke: '#3a0608',
-        strokeThickness: 8,
-      })
-      .setOrigin(0.5)
-      .setDepth(200);
-    this.add
-      .text(cx, 196, 'press R to duel again', {
-        fontFamily: 'monospace',
-        fontSize: '18px',
-        color: '#f4efe2',
-      })
-      .setOrigin(0.5)
-      .setAlpha(0.85)
-      .setDepth(200);
+    (playerWon ? this.enemy : this.player).die();
+    // brief on-field collapse glimpse, then the red wash takes over
+    this.time.delayedCall(200, () => new KillBeat(this).play(playerWon));
   }
 
   private handleGesture(path: { x: number; y: number }[], gesture: string) {
