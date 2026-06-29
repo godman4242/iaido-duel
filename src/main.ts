@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { GAME_W, GAME_H } from './config';
+import { GAME_W, GAME_H, DEV } from './config';
 import { DuelScene } from './game/scenes/DuelScene';
 
 new Phaser.Game({
@@ -11,3 +11,13 @@ new Phaser.Game({
   scene: [DuelScene],
   render: { antialias: true, roundPixels: false },
 });
+
+// Dev-only fidelity gate: ?compare=<still> pins a reference frame beside the game.
+if (DEV) {
+  const params = new URLSearchParams(location.search);
+  if (params.has('compare')) {
+    void import('./dev/CompareView').then((m) =>
+      m.mountCompareView(params.get('compare') || 'forest_fight.png'),
+    );
+  }
+}
