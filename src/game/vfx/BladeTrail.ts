@@ -32,7 +32,7 @@ export class BladeTrail {
 
   update(deltaMs: number): void {
     if (!this.fading || this.alpha <= 0) return;
-    this.alpha = Math.max(0, this.alpha - deltaMs / 240);
+    this.alpha = Math.max(0, this.alpha - deltaMs / 200);
     this.redraw();
   }
 
