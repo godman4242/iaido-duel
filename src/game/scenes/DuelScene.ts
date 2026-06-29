@@ -102,6 +102,18 @@ export class DuelScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setAlpha(0.7);
 
+    // small homage credit (always visible, low-key)
+    this.add
+      .text(
+        GAME_W - 8,
+        GAME_H - 8,
+        'Fan homage of Straw Hat Samurai: Duels by Explosive Barrel — unaffiliated, non-commercial.',
+        { fontFamily: 'monospace', fontSize: '10px', color: '#eceffe' },
+      )
+      .setOrigin(1, 1)
+      .setAlpha(0.5)
+      .setDepth(120);
+
     // dev hook for inspecting live state from the console
     (window as unknown as { __duel?: DuelScene }).__duel = this;
   }
