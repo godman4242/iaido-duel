@@ -21,6 +21,12 @@ export class Forest {
     haze.fillStyle(COL.mistTealDark, 0.45).fillRect(-120, groundY - 150, GAME_W + 240, 230);
     this.add(haze, 0);
 
+    // --- sky peek at the very top (warms the canopy gap) ---
+    const sky = scene.add.graphics().setDepth(-19);
+    sky.fillGradientStyle(COL.skyTop, COL.skyTop, COL.skyLow, COL.skyLow, 0.5);
+    sky.fillRect(-120, 0, GAME_W + 240, 70);
+    this.add(sky, 0.01);
+
     // --- top canopy band: bright yellow-green leaves ---
     const canopy = scene.add.graphics().setDepth(-16);
     this.canopies(canopy, 60, 120, COL.canopy, 1);
@@ -42,6 +48,16 @@ export class Forest {
     const near = scene.add.graphics().setDepth(-8);
     this.bamboo(near, groundY, COL.trunk, 6, 0.95);
     this.add(near, 0.14);
+
+    // --- big foreground trunks framing the arena (strong parallax) ---
+    const fg = scene.add.graphics().setDepth(-6);
+    fg.fillStyle(COL.trunk, 1);
+    fg.fillRect(-40, -20, 46, groundY + 80);
+    fg.fillRect(GAME_W - 14, -20, 52, groundY + 80);
+    fg.fillStyle(COL.forestDark, 0.6);
+    fg.fillRect(-40, -20, 12, groundY + 80);
+    fg.fillRect(GAME_W + 22, -20, 12, groundY + 80);
+    this.add(fg, 0.2);
 
     // --- soft bokeh light motes ---
     const bokeh = scene.add.graphics().setDepth(-7);
