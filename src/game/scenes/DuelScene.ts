@@ -12,6 +12,7 @@ import { Hud } from '../ui/Hud';
 import { AIController } from '../ai/AIController';
 import { Forest } from '../background/Forest';
 import { playSlash, playImpact, playStanceSwitch, playGrunt, resumeAudio, toggleMuted } from '../audio/sfx';
+import { Combo } from '../../core/combo';
 
 const GROUND_Y = GAME_H - 96;
 const MOVE_SPEED = 0.28; // px per ms
@@ -25,6 +26,7 @@ export class DuelScene extends Phaser.Scene {
   private ai!: AIController;
   private forest!: Forest;
   private playerFocus = new Focus();
+  private combo = new Combo();
   private keys!: Record<'left' | 'right', Phaser.Input.Keyboard.Key>;
   private busyUntil = 0;
   private playerWindupUntil = 0;
@@ -51,6 +53,7 @@ export class DuelScene extends Phaser.Scene {
     // spawn grace: both fighters invulnerable + blinking briefly at the start of the duel
     this.over = false;
     this.finishing = false;
+    this.combo.reset();
     this.cameras.main.setZoom(1);
     this.graceUntil = this.time.now + 1500;
     for (const f of [this.player, this.enemy]) {
@@ -162,6 +165,9 @@ export class DuelScene extends Phaser.Scene {
       playImpact();
       const severed = result.hits.filter((h) => h.severed).length;
       this.playerFocus.gain(16 + severed * 10);
+      this.combo.hit(this.time.now);
+    } else {
+      this.combo.reset();
     }
   }
 
@@ -297,6 +303,6 @@ export class DuelScene extends Phaser.Scene {
     // animate both fighters every frame (incl. the death fall while finishing)
     this.player.update(delta, playerMoving);
     this.enemy.update(delta, enemyMoving);
-    this.hud.update();
+    this.hud.update(this.combo.value(this.time.now));
   }
 }

@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { GAME_H } from '../../config';
+import { GAME_W, GAME_H } from '../../config';
 import { COL } from '../../palette';
 import { Focus, FOCUS_MAX } from '../../core/focus';
 import { Fighter } from '../fighter/Fighter';
@@ -12,6 +12,9 @@ export class Hud {
   private stanceLabel: Phaser.GameObjects.Text;
   private pName: Phaser.GameObjects.Text;
   private eName: Phaser.GameObjects.Text;
+  private combo: Phaser.GameObjects.Text;
+  private comboLabel: Phaser.GameObjects.Text;
+  private lastCombo = 0;
 
   constructor(
     scene: Phaser.Scene,
@@ -25,6 +28,15 @@ export class Hud {
     this.eName = scene.add
       .text(0, 0, 'RONIN', { ...f, fontSize: '12px' })
       .setOrigin(0.5)
+      .setDepth(101);
+    this.comboLabel = scene.add
+      .text(GAME_W - 20, 16, 'HIT COMBO', { fontFamily: 'monospace', fontSize: '12px', color: '#e8a83a' })
+      .setOrigin(1, 0)
+      .setDepth(101)
+      .setVisible(false);
+    this.combo = scene.add
+      .text(GAME_W - 20, 30, '', { fontFamily: 'Georgia, serif', fontStyle: 'bold', fontSize: '34px', color: '#c01f29' })
+      .setOrigin(1, 0)
       .setDepth(101);
   }
 
@@ -56,7 +68,7 @@ export class Hud {
     this.bar(fighter.x - w / 2, top, w, 6, fighter.health / fighter.maxHealth, COL.healthGreen);
   }
 
-  update() {
+  update(comboCount = 0) {
     const { player, enemy, focus } = this.opts;
     this.g.clear();
 
@@ -68,5 +80,15 @@ export class Hud {
 
     this.floating(player, this.pName);
     this.floating(enemy, this.eName);
+
+    // HIT COMBO counter (top-right), pulses when it climbs
+    const show = comboCount >= 2;
+    this.comboLabel.setVisible(show);
+    this.combo.setText(show ? String(comboCount) : '');
+    if (show && comboCount > this.lastCombo) {
+      this.combo.setScale(1.4);
+      (this.combo.scene as Phaser.Scene).tweens.add({ targets: this.combo, scale: 1, duration: 160, ease: 'Quad.easeOut' });
+    }
+    this.lastCombo = comboCount;
   }
 }
