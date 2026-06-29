@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import { GAME_W, GAME_H, DEV } from './config';
+import { BootScene } from './game/scenes/BootScene';
+import { TownScene } from './game/scenes/TownScene';
 import { DuelScene } from './game/scenes/DuelScene';
 
 new Phaser.Game({
@@ -8,7 +10,7 @@ new Phaser.Game({
   width: GAME_W,
   height: GAME_H,
   backgroundColor: '#0d0d0d',
-  scene: [DuelScene],
+  scene: [BootScene, TownScene, DuelScene],
   render: { antialias: true, roundPixels: false },
 });
 
