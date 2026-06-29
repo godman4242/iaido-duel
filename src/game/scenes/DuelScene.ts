@@ -1,7 +1,9 @@
 import Phaser from 'phaser';
 import { GAME_W, GAME_H } from '../../config';
+import { COL } from '../../palette';
 import { Fighter } from '../fighter/Fighter';
 import { IDLE_POSE, SLASH_POSE } from '../fighter/Skeleton';
+import { drawSkeleton } from '../fighter/drawFighter';
 import { GestureInput } from '../input/GestureInput';
 import { BladeTrail } from '../vfx/BladeTrail';
 import { STANCES, counterBonus, StanceId } from '../../core/stance';
@@ -28,6 +30,7 @@ export class DuelScene extends Phaser.Scene {
   private busyUntil = 0;
   private playerWindupUntil = 0;
   private over = false;
+  private finishing = false;
   private graceUntil = 0;
 
   constructor() {
@@ -35,7 +38,7 @@ export class DuelScene extends Phaser.Scene {
   }
 
   create() {
-    this.cameras.main.setBackgroundColor(0xbfd6c2);
+    this.cameras.main.setBackgroundColor(0x4ba1a4);
     this.forest = new Forest(this, GROUND_Y);
 
     this.player = new Fighter(this, GAME_W * 0.43, GROUND_Y, 1, { stance: 'balanced' });
@@ -48,6 +51,8 @@ export class DuelScene extends Phaser.Scene {
 
     // spawn grace: both fighters invulnerable + blinking briefly at the start of the duel
     this.over = false;
+    this.finishing = false;
+    this.cameras.main.setZoom(1);
     this.graceUntil = this.time.now + 1500;
     for (const f of [this.player, this.enemy]) {
       this.tweens.add({ targets: f, alpha: 0.35, duration: 150, yoyo: true, repeat: 4 });
@@ -144,26 +149,59 @@ export class DuelScene extends Phaser.Scene {
     }
   }
 
+  /** The killing-blow beat: white flash + camera punch + a held moment, then the win screen. */
+  private onKill(playerWon: boolean) {
+    if (this.finishing) return;
+    this.finishing = true;
+    this.over = true;
+    const flash = this.add.graphics().setDepth(180);
+    flash.fillStyle(0xffffff, 0.85).fillRect(0, 0, GAME_W, GAME_H);
+    this.tweens.add({ targets: flash, alpha: 0, duration: 280, onComplete: () => flash.destroy() });
+    this.cameras.main.zoomTo(1.09, 220, 'Quad.easeOut');
+    this.time.delayedCall(560, () => {
+      this.cameras.main.setZoom(1);
+      this.endDuel(playerWon);
+    });
+  }
+
   private endDuel(playerWon: boolean) {
     this.over = true;
     const cx = GAME_W / 2;
+
+    // full red wash with a darker ground band (the original's kill-screen beat)
+    const wash = this.add.graphics().setDepth(190);
+    wash.fillStyle(playerWon ? COL.winRed : 0x1d2127, 1).fillRect(0, 0, GAME_W, GAME_H);
+    wash.fillStyle(playerWon ? COL.winRedDeep : 0x0f1216, 1).fillRect(0, GAME_H * 0.64, GAME_W, GAME_H);
+
+    // fallen foe — a dark heap at the victor's feet
+    const heap = this.add.graphics().setDepth(191).setPosition(cx + 120, GAME_H * 0.7);
+    heap.fillStyle(COL.outline, 1);
+    heap.fillEllipse(0, 18, 150, 34);
+    heap.fillEllipse(-60, 4, 60, 26);
+
+    // victor silhouette, mid-flourish
+    const sil = this.add.graphics().setDepth(192).setPosition(cx - 40, GAME_H * 0.72).setScale(1.7);
+    drawSkeleton(sil, SLASH_POSE, { severed: new Set(), silhouette: true });
+
     this.add
-      .text(cx, 210, playerWon ? 'VICTORY' : 'DEFEAT', {
-        fontFamily: 'serif',
-        fontSize: '64px',
-        color: playerWon ? '#efedc2' : '#a50103',
-        stroke: '#040304',
-        strokeThickness: 6,
+      .text(cx, 130, playerWon ? 'YOU WIN' : 'YOU LOSE', {
+        fontFamily: 'Georgia, "Times New Roman", serif',
+        fontStyle: 'bold italic',
+        fontSize: '78px',
+        color: '#f4efe2',
+        stroke: '#3a0608',
+        strokeThickness: 8,
       })
       .setOrigin(0.5)
       .setDepth(200);
     this.add
-      .text(cx, 270, 'press R to duel again', {
+      .text(cx, 196, 'press R to duel again', {
         fontFamily: 'monospace',
         fontSize: '18px',
-        color: '#efedc2',
+        color: '#f4efe2',
       })
       .setOrigin(0.5)
+      .setAlpha(0.85)
       .setDepth(200);
   }
 
@@ -263,8 +301,9 @@ export class DuelScene extends Phaser.Scene {
       this.hud.update();
       return;
     }
-    if (this.enemy.isDead) return this.endDuel(true);
-    if (this.player.isDead) return this.endDuel(false);
+    if (!this.finishing && (this.enemy.isDead || this.player.isDead)) {
+      return this.onKill(this.enemy.isDead);
+    }
 
     // lateral movement to close/open distance
     let dir = 0;

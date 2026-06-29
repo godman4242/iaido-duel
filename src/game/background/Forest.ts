@@ -14,26 +14,33 @@ export class Forest {
   private centerX = GAME_W / 2;
 
   constructor(scene: Phaser.Scene, groundY: number) {
-    // --- haze / sky: light misty green at top fading into the canopy ---
+    // --- haze / depth: teal mist, lighter at top, darkening into the grove ---
     const haze = scene.add.graphics().setDepth(-20);
-    haze.fillGradientStyle(0xbfd6c2, 0xbfd6c2, COL.forestShadow, COL.forestShadow, 1);
+    haze.fillGradientStyle(COL.mistTeal, COL.mistTeal, COL.mistTealDeep, COL.mistTealDeep, 1);
     haze.fillRect(-120, 0, GAME_W + 240, groundY + 80);
+    haze.fillStyle(COL.mistTealDark, 0.45).fillRect(-120, groundY - 150, GAME_W + 240, 230);
     this.add(haze, 0);
 
-    // --- far tree band: soft sage canopies ---
+    // --- top canopy band: bright yellow-green leaves ---
+    const canopy = scene.add.graphics().setDepth(-16);
+    this.canopies(canopy, 60, 120, COL.canopy, 1);
+    this.canopies(canopy, 20, 78, COL.canopyBright, 0.9);
+    this.add(canopy, 0.03);
+
+    // --- far trunks: hazy, teal-toned ---
     const far = scene.add.graphics().setDepth(-15);
-    this.canopies(far, groundY - 40, 70, COL.sage2, 0.9);
-    this.add(far, 0.04);
+    this.bamboo(far, groundY, COL.mistTealDeep, 9, 0.6);
+    this.add(far, 0.05);
 
-    // --- mid tree band: darker, taller, with bamboo trunks ---
+    // --- mid: foliage clumps + dark trunks ---
     const mid = scene.add.graphics().setDepth(-10);
-    this.bamboo(mid, groundY, COL.forestShadow);
-    this.canopies(mid, groundY - 120, 110, COL.forestShadow, 1);
-    this.add(mid, 0.08);
+    this.bamboo(mid, groundY, COL.trunk, 11, 1);
+    this.canopies(mid, groundY - 170, 86, COL.forestShadow, 0.92);
+    this.add(mid, 0.09);
 
-    // --- near bamboo: dark trunks framing the arena ---
+    // --- near dark trunks framing the arena ---
     const near = scene.add.graphics().setDepth(-8);
-    this.bamboo(near, groundY, COL.forestDark, 5, 0.9);
+    this.bamboo(near, groundY, COL.trunk, 6, 0.95);
     this.add(near, 0.14);
 
     // --- soft bokeh light motes ---

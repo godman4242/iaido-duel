@@ -25,4 +25,14 @@ export const COL = {
   skinShade: 0xc79b76,
   blade: 0xcfd6da,
   bladeEdge: 0xeef3f6,
+  bladeChi: 0x6fc3e8, // blue chi glow on the katana (from the videos)
+  // forest depth eyedropped from the real gameplay frame (teal mist + yellow-green canopy)
+  mistTeal: 0x4ba1a4,
+  mistTealDeep: 0x337077,
+  mistTealDark: 0x143a40,
+  canopy: 0x7da443,
+  canopyBright: 0x9bc24a,
+  trunk: 0x0a2228,
+  winRed: 0xc01f29,
+  winRedDeep: 0x7e1018,
 } as const;

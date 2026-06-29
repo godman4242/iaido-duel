@@ -38,7 +38,7 @@ function outlinedPoly(g: G, pts: number[][], fill: number, ow = 3): void {
   g.strokePath();
 }
 
-export type DrawOpts = { severed: Set<string> };
+export type DrawOpts = { severed: Set<string>; silhouette?: boolean };
 
 /**
  * Draw the samurai in LOCAL coords (origin at pelvis, +x forward, +y down).
@@ -47,6 +47,30 @@ export type DrawOpts = { severed: Set<string> };
  */
 export function drawSkeleton(g: G, p: Pose, opts: DrawOpts): void {
   const cut = opts.severed;
+
+  // flat black silhouette (for the win screen)
+  if (opts.silhouette) {
+    const b = COL.outline;
+    capsule(g, p.hipB.x, p.hipB.y, p.kneeB.x, p.kneeB.y, 8, b, 0);
+    capsule(g, p.kneeB.x, p.kneeB.y, p.footB.x, p.footB.y, 7, b, 0);
+    capsule(g, p.chest.x, p.chest.y, p.pelvis.x, p.pelvis.y, 17, b, 0);
+    capsule(g, p.hipF.x, p.hipF.y, p.kneeF.x, p.kneeF.y, 9, b, 0);
+    capsule(g, p.kneeF.x, p.kneeF.y, p.footF.x, p.footF.y, 8, b, 0);
+    capsule(g, p.neck.x, p.neck.y, p.head.x, p.head.y, 10, b, 0);
+    g.fillStyle(b, 1);
+    g.fillCircle(p.head.x, p.head.y, 13);
+    capsule(g, p.shoulderF.x, p.shoulderF.y, p.elbowF.x, p.elbowF.y, 9, b, 0);
+    capsule(g, p.elbowF.x, p.elbowF.y, p.handF.x, p.handF.y, 8, b, 0);
+    capsule(g, p.handF.x, p.handF.y, p.sword.x, p.sword.y, 3, b, 0);
+    g.fillStyle(b, 1);
+    g.beginPath();
+    g.moveTo(p.head.x - 32, p.head.y - 2);
+    g.lineTo(p.head.x + 34, p.head.y - 2);
+    g.lineTo(p.hat.x + 4, p.hat.y);
+    g.closePath();
+    g.fillPath();
+    return;
+  }
   // back leg (behind body) — darker kimono
   if (!cut.has('legB')) {
     capsule(g, p.hipB.x, p.hipB.y, p.kneeB.x, p.kneeB.y, 8, COL.kimonoShade);
@@ -94,7 +118,19 @@ export function drawSkeleton(g: G, p: Pose, opts: DrawOpts): void {
     g.fillCircle(p.handF.x, p.handF.y, 6);
   }
   // katana — blade from hand to tip + guard
+  // blue chi glow under the blade
+  g.lineStyle(8, COL.bladeChi, 0.3);
+  g.beginPath();
+  g.moveTo(p.handF.x, p.handF.y);
+  g.lineTo(p.sword.x, p.sword.y);
+  g.strokePath();
   capsule(g, p.handF.x, p.handF.y, p.sword.x, p.sword.y, 3, COL.blade, 2);
+  // blue chi edge highlight
+  g.lineStyle(1.5, COL.bladeChi, 0.9);
+  g.beginPath();
+  g.moveTo(p.handF.x, p.handF.y);
+  g.lineTo(p.sword.x, p.sword.y);
+  g.strokePath();
   g.fillStyle(COL.bladeEdge, 1);
   g.fillCircle(p.sword.x, p.sword.y, 2);
   g.fillStyle(COL.wood, 1);
