@@ -51,7 +51,8 @@ function outlinedPoly(g: G, pts: number[][], fill: number, ow = 3): void {
   g.strokePath();
 }
 
-export type DrawOpts = { severed: Set<string>; silhouette?: boolean };
+export type Skin = { haori: number; haoriShade: number };
+export type DrawOpts = { severed: Set<string>; silhouette?: boolean; skin?: Skin };
 
 /**
  * Draw the samurai in LOCAL coords (origin at pelvis, +x forward, +y down).
@@ -60,6 +61,8 @@ export type DrawOpts = { severed: Set<string>; silhouette?: boolean };
  */
 export function drawSkeleton(g: G, p: Pose, opts: DrawOpts): void {
   const cut = opts.severed;
+  const haori = opts.skin?.haori ?? COL.haori;
+  const haoriShade = opts.skin?.haoriShade ?? COL.haoriShade;
 
   // flat black silhouette (for the win screen)
   if (opts.silhouette) {
@@ -119,7 +122,7 @@ export function drawSkeleton(g: G, p: Pose, opts: DrawOpts): void {
   // white under-kimono torso (slim)
   if (!cut.has('torso')) shaded(g, p.chest.x, p.chest.y, p.pelvis.x, p.pelvis.y, 12, COL.kimono, COL.kimonoShade);
   // navy hooded haori (open jacket) over the torso + upper thighs
-  shaded(g, p.neck.x, p.neck.y + 4, p.pelvis.x + 3, p.pelvis.y + 16, 15, COL.haori, COL.haoriShade);
+  shaded(g, p.neck.x, p.neck.y + 4, p.pelvis.x + 3, p.pelvis.y + 16, 15, haori, haoriShade);
   // open front: white kimono V down the centre
   outlinedPoly(
     g,
@@ -142,10 +145,10 @@ export function drawSkeleton(g: G, p: Pose, opts: DrawOpts): void {
   g.strokePath();
   // hood at the back of the neck
   g.lineStyle(3, COL.outline, 1);
-  g.fillStyle(COL.haori, 1);
+  g.fillStyle(haori, 1);
   g.fillCircle(p.neck.x - 10, p.neck.y - 1, 11);
   g.strokeCircle(p.neck.x - 10, p.neck.y - 1, 11);
-  g.fillStyle(COL.haoriShade, 1);
+  g.fillStyle(haoriShade, 1);
   g.fillCircle(p.neck.x - 12, p.neck.y + 2, 7);
   // gold obi (sash) at the waist
   capsule(g, p.pelvis.x - 11, p.pelvis.y - 16, p.pelvis.x + 13, p.pelvis.y - 16, 6, COL.obi);
@@ -167,9 +170,9 @@ export function drawSkeleton(g: G, p: Pose, opts: DrawOpts): void {
     g.fillRect(p.head.x - 12, p.head.y - 5, 26, 6);
   }
   // sword arm: navy haori sleeve + white cuff + hand
-  if (!cut.has('armF')) shaded(g, p.shoulderF.x, p.shoulderF.y, p.elbowF.x, p.elbowF.y, 9, COL.haori, COL.haoriShade);
+  if (!cut.has('armF')) shaded(g, p.shoulderF.x, p.shoulderF.y, p.elbowF.x, p.elbowF.y, 9, haori, haoriShade);
   if (!cut.has('forearmF')) {
-    shaded(g, p.elbowF.x, p.elbowF.y, p.handF.x - 4, p.handF.y - 1, 8, COL.haori, COL.haoriShade);
+    shaded(g, p.elbowF.x, p.elbowF.y, p.handF.x - 4, p.handF.y - 1, 8, haori, haoriShade);
     capsule(g, p.handF.x - 7, p.handF.y - 2, p.handF.x - 1, p.handF.y, 7, COL.kimono);
     g.fillStyle(COL.skin, 1);
     g.lineStyle(2, COL.outline, 1);

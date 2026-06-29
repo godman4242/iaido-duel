@@ -43,4 +43,6 @@ export const COL = {
   trunk: 0x0a2228,
   winRed: 0xc01f29,
   winRedDeep: 0x7e1018,
+  haoriEnemy: 0x6b2030, // oxblood haori — the RONIN, distinct from the player's navy
+  haoriEnemyShade: 0x47131f,
 } as const;

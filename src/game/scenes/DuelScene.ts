@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { GAME_W, GAME_H } from '../../config';
+import { COL } from '../../palette';
 import { Fighter } from '../fighter/Fighter';
 import { GestureInput } from '../input/GestureInput';
 import { KillBeat } from './KillBeat';
@@ -43,7 +44,10 @@ export class DuelScene extends Phaser.Scene {
     this.forest = new Forest(this, GROUND_Y);
 
     this.player = new Fighter(this, GAME_W * 0.43, GROUND_Y, 1, { stance: 'balanced' });
-    this.enemy = new Fighter(this, GAME_W * 0.57, GROUND_Y, -1, { stance: 'heavy' });
+    this.enemy = new Fighter(this, GAME_W * 0.57, GROUND_Y, -1, {
+      stance: 'heavy',
+      skin: { haori: COL.haoriEnemy, haoriShade: COL.haoriEnemyShade },
+    });
 
     this.trail = new BladeTrail(this);
     this.gore = new Gore(this);

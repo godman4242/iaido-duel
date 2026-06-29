@@ -3,12 +3,13 @@ import { Limb, SlashResult } from '../../core/slash';
 import { StanceId } from '../../core/stance';
 import { IDLE_POSE, Pose, worldLimbs } from './Skeleton';
 import { FighterAnimator, GuardLevel } from './FighterAnimator';
-import { drawSkeleton } from './drawFighter';
+import { drawSkeleton, Skin } from './drawFighter';
 
 export type FighterOpts = {
   maxHealth?: number;
   stance?: StanceId;
   atkPlusWeapon?: number;
+  skin?: Skin;
 };
 
 /** A procedural vector samurai: skeleton of capsule limbs that can be sliced and severed. */
@@ -23,6 +24,7 @@ export class Fighter extends Phaser.GameObjects.Container {
   blocking = false;
   private animator = new FighterAnimator();
   private gfx: Phaser.GameObjects.Graphics;
+  private skin?: Skin;
 
   constructor(scene: Phaser.Scene, x: number, y: number, facing: 1 | -1, opts: FighterOpts = {}) {
     super(scene, x, y);
@@ -32,6 +34,7 @@ export class Fighter extends Phaser.GameObjects.Container {
     this.health = this.maxHealth;
     this.stanceId = opts.stance ?? 'balanced';
     this.atkPlusWeapon = opts.atkPlusWeapon ?? 10;
+    this.skin = opts.skin;
     this.gfx = scene.add.graphics();
     this.add(this.gfx);
     scene.add.existing(this);
@@ -81,7 +84,7 @@ export class Fighter extends Phaser.GameObjects.Container {
 
   redraw(): void {
     this.gfx.clear();
-    drawSkeleton(this.gfx, this.pose, { severed: this.severed });
+    drawSkeleton(this.gfx, this.pose, { severed: this.severed, skin: this.skin });
   }
 
   get isDead(): boolean {
