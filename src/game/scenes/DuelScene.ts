@@ -55,6 +55,7 @@ export class DuelScene extends Phaser.Scene {
     this.enemy = new Fighter(this, GAME_W * 0.57, GROUND_Y, -1, {
       stance: 'heavy',
       skin: { haori: COL.haoriEnemy, haoriShade: COL.haoriEnemyShade },
+      atkPlusWeapon: 7,
     });
 
     this.trail = new BladeTrail(this);

@@ -16,9 +16,9 @@ export type AIParams = {
 };
 
 // Time (ms) spent in a state before it auto-advances.
-export const TELEGRAPH_MS = 420;
+export const TELEGRAPH_MS = 520;
 export const ATTACK_MS = 180;
-export const RECOVER_MS = 460;
+export const RECOVER_MS = 620;
 export const REACT_MS = 320;
 
 /** Pure transition: given the current state, time-in-state, what it senses, and its params. */

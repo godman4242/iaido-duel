@@ -29,8 +29,8 @@ export class AIController {
     this.params = {
       approachRange: 620,
       strikeRange: 132,
-      reactBlockChance: 0.33,
-      reactDodgeChance: 0.22,
+      reactBlockChance: 0.22,
+      reactDodgeChance: 0.16,
       ...opts.params,
     };
     this.tell = scene.add.graphics();
