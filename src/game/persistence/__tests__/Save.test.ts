@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { saveGame, loadGame, hasSave, clearSave, SAVE_KEY, StorageLike } from '../Save';
+import { saveGame, loadGame, hasSave, clearSave, SAVE_KEY } from '../Save';
+import type { StorageLike } from '../Save';
 import { createNewGame } from '../../../core/gamestate';
 
 function fakeStorage(): StorageLike {

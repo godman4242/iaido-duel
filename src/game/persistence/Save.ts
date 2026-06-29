@@ -24,7 +24,12 @@ export function saveGame(state: GameState, storage: StorageLike | null = default
 
 export function loadGame(storage: StorageLike | null = defaultStorage()): GameState | null {
   const raw = storage?.getItem(SAVE_KEY) ?? null;
-  return raw === null ? null : deserialize(raw);
+  if (raw === null) return null;
+  try {
+    return deserialize(raw);
+  } catch {
+    return null;
+  }
 }
 
 export function hasSave(storage: StorageLike | null = defaultStorage()): boolean {
