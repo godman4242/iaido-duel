@@ -21,6 +21,8 @@ describe('FighterAnimator', () => {
     a.setMoving(true);
     const p = run(a, 200);
     expect(Math.abs(p.footF.x - IDLE_POSE.footF.x)).toBeGreaterThan(2);
+    // antiphase: front and back foot must swing in opposite x directions
+    expect(Math.sign(p.footF.x - IDLE_POSE.footF.x)).toBe(-Math.sign(p.footB.x - IDLE_POSE.footB.x));
   });
   it('slash drives the sword hand forward during the strike then returns', () => {
     const a = new FighterAnimator();
@@ -40,6 +42,18 @@ describe('FighterAnimator', () => {
     const p = run(a, 300);
     expect(p.sword.x).toBeLessThan(0); // wind-up sword is behind (negative x)
     expect(a.guardLevel()).toBe('telegraph');
+  });
+  it('startDeath re-entry guard: second call must not reset the death animation', () => {
+    const a = new FighterAnimator();
+    a.startDeath();
+    const collapsedPose = run(a, 500); // > DEATH_MS(320) — fully collapsed
+    const collapsedY = collapsedPose.head.y;
+    // collapsedY should be well below IDLE (closer to DEAD.head.y ≈ -10 vs IDLE.head.y = -86)
+    expect(collapsedY).toBeGreaterThan(IDLE_POSE.head.y);
+    a.startDeath(); // second call — must be a no-op
+    const p = a.update(16);
+    // still fully collapsed, NOT rewound back toward IDLE
+    expect(p.head.y).toBeCloseTo(collapsedY, 1);
   });
   it('death collapses to the DEAD pose and is terminal', () => {
     const a = new FighterAnimator();

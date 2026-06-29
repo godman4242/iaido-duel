@@ -65,6 +65,7 @@ export class FighterAnimator {
     }
   }
   startDeath(): void {
+    if (this.dead) return;
     this.dead = true;
     this.action = 'dead';
     this.actionElapsed = 0;
