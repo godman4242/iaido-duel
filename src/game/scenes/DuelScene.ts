@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { GAME_W, GAME_H } from '../../config';
 import { COL } from '../../palette';
 import { Fighter } from '../fighter/Fighter';
-import { IDLE_POSE, SLASH_POSE } from '../fighter/Skeleton';
+import { SLASH_FOLLOW } from '../fighter/Skeleton';
 import { drawSkeleton } from '../fighter/drawFighter';
 import { GestureInput } from '../input/GestureInput';
 import { BladeTrail } from '../vfx/BladeTrail';
@@ -141,8 +141,7 @@ export class DuelScene extends Phaser.Scene {
   private doSlash(path: { x: number; y: number }[]) {
     if (this.time.now < this.busyUntil) return;
     this.busyUntil = this.time.now + 220;
-    this.player.setPose(SLASH_POSE);
-    this.time.delayedCall(150, () => this.player.setPose(IDLE_POSE));
+    this.player.slash();
 
     const stance = STANCES[this.player.stanceId];
     const input: SlashInput = {
@@ -200,7 +199,7 @@ export class DuelScene extends Phaser.Scene {
 
     // victor silhouette, mid-flourish
     const sil = this.add.graphics().setDepth(192).setPosition(cx - 40, GAME_H * 0.72).setScale(1.7);
-    drawSkeleton(sil, SLASH_POSE, { severed: new Set(), silhouette: true });
+    drawSkeleton(sil, SLASH_FOLLOW, { severed: new Set(), silhouette: true });
 
     this.add
       .text(cx, 130, playerWon ? 'YOU WIN' : 'YOU LOSE', {
@@ -246,8 +245,7 @@ export class DuelScene extends Phaser.Scene {
   /** A close-range special move (launch / stab): connects if the enemy is within reach. */
   private dealSpecial(mult: number, knockUp: number) {
     this.busyUntil = this.time.now + 320;
-    this.player.setPose(SLASH_POSE);
-    this.time.delayedCall(150, () => this.player.setPose(IDLE_POSE));
+    this.player.slash();
     playSlash();
 
     const stance = STANCES[this.player.stanceId];
@@ -300,6 +298,7 @@ export class DuelScene extends Phaser.Scene {
     const base = this.enemy.atkPlusWeapon * stance.dmgMult * counterBonus(this.enemy.stanceId, this.player.stanceId);
     const dmg = Math.round(base * STANCES[this.player.stanceId].damageTakenMult);
     this.player.health = Math.max(0, this.player.health - dmg);
+    this.player.hitAnim();
     this.player.redraw();
     this.gore.spray({ x: this.player.x, y: this.player.y - 46 }, 9);
     playImpact();
@@ -320,27 +319,32 @@ export class DuelScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number) {
-    if (this.over) {
-      this.hud.update();
-      return;
-    }
     if (!this.finishing && (this.enemy.isDead || this.player.isDead)) {
-      return this.onKill(this.enemy.isDead);
+      this.onKill(this.enemy.isDead);
     }
 
-    // lateral movement to close/open distance
-    let dir = 0;
-    if (this.keys.left.isDown) dir -= 1;
-    if (this.keys.right.isDown) dir += 1;
-    this.player.x = Phaser.Math.Clamp(this.player.x + dir * MOVE_SPEED * delta, 60, GAME_W - 60);
+    let playerMoving = false;
+    let enemyMoving = false;
 
-    // always face the opponent
-    this.player.facing = this.enemy.x >= this.player.x ? 1 : -1;
-    this.player.scaleX = this.player.facing;
+    if (!this.over) {
+      let dir = 0;
+      if (this.keys.left.isDown) dir -= 1;
+      if (this.keys.right.isDown) dir += 1;
+      this.player.x = Phaser.Math.Clamp(this.player.x + dir * MOVE_SPEED * delta, 60, GAME_W - 60);
+      playerMoving = dir !== 0;
 
-    this.forest.update(this.player.x);
-    this.ai.update(delta);
-    this.trail.update(delta);
+      this.player.facing = this.enemy.x >= this.player.x ? 1 : -1;
+      this.player.scaleX = this.player.facing;
+
+      this.forest.update(this.player.x);
+      this.ai.update(delta);
+      enemyMoving = this.ai.stateName() === 'approach';
+      this.trail.update(delta);
+    }
+
+    // animate both fighters every frame (incl. the death fall while finishing)
+    this.player.update(delta, playerMoving);
+    this.enemy.update(delta, enemyMoving);
     this.hud.update();
   }
 }

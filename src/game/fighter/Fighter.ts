@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { Limb, SlashResult } from '../../core/slash';
 import { StanceId } from '../../core/stance';
 import { IDLE_POSE, Pose, worldLimbs } from './Skeleton';
+import { FighterAnimator, GuardLevel } from './FighterAnimator';
 import { drawSkeleton } from './drawFighter';
 
 export type FighterOpts = {
@@ -20,6 +21,7 @@ export class Fighter extends Phaser.GameObjects.Container {
   pose: Pose = IDLE_POSE;
   severed = new Set<string>();
   blocking = false;
+  private animator = new FighterAnimator();
   private gfx: Phaser.GameObjects.Graphics;
 
   constructor(scene: Phaser.Scene, x: number, y: number, facing: 1 | -1, opts: FighterOpts = {}) {
@@ -51,9 +53,29 @@ export class Fighter extends Phaser.GameObjects.Container {
     this.redraw();
   }
 
+  /** Advance the animation one frame and render. `moving` drives the walk vs idle base layer. */
+  update(dtMs: number, moving: boolean): void {
+    this.animator.setMoving(moving);
+    this.setPose(this.animator.update(dtMs));
+  }
+
+  setGuard(g: GuardLevel): void {
+    this.animator.setGuard(g);
+  }
+  slash(): void {
+    this.animator.startSlash();
+  }
+  hitAnim(): void {
+    this.animator.startHit();
+  }
+  die(): void {
+    this.animator.startDeath();
+  }
+
   applyHit(result: SlashResult): void {
     this.health = Math.max(0, this.health - result.totalDamage);
     for (const h of result.hits) if (h.severed) this.severed.add(h.limbId);
+    this.hitAnim();
     this.redraw();
   }
 

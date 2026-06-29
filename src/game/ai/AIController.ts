@@ -1,10 +1,8 @@
 import Phaser from 'phaser';
 import { AIState, AIParams, nextAIState } from '../../core/ai';
 import { COL } from '../../palette';
-import { IDLE_POSE, SLASH_POSE, lerpPose } from '../fighter/Skeleton';
 import { Fighter } from '../fighter/Fighter';
 
-const WINDUP_POSE = lerpPose(IDLE_POSE, SLASH_POSE, -0.35); // arm drawn back — the "tell"
 const ENEMY_SPEED = 0.17; // px/ms
 
 export type AIControllerOpts = {
@@ -70,32 +68,31 @@ export class AIController {
     const { self } = this.opts;
     // leaving a state: clear its effects
     self.blocking = false;
+    self.setGuard('none');
     this.state = state;
     this.tInState = 0;
 
     switch (state) {
       case 'telegraph':
-        self.setPose(WINDUP_POSE);
+        self.setGuard('telegraph');
         break;
       case 'attack':
-        self.setPose(SLASH_POSE);
+        self.slash();
         this.opts.onAttack();
-        break;
-      case 'recover':
-      case 'idle':
-      case 'approach':
-        self.setPose(IDLE_POSE);
         break;
       case 'block':
         self.blocking = true;
-        self.setPose(WINDUP_POSE);
+        self.setGuard('block');
         break;
       case 'dodge': {
-        self.setPose(IDLE_POSE);
         const back = -self.facing * 70;
         this.scene.tweens.add({ targets: self, x: self.x + back, duration: 200, yoyo: true, ease: 'Quad.easeOut' });
         break;
       }
+      case 'recover':
+      case 'idle':
+      case 'approach':
+        break;
     }
   }
 
