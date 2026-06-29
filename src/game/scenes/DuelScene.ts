@@ -18,6 +18,14 @@ import { Combo } from '../../core/combo';
 const GROUND_Y = GAME_H - 96;
 const MOVE_SPEED = 0.28; // px per ms
 
+const LIMB_COLOR: Record<string, number> = {
+  armF: COL.haori,
+  forearmF: COL.haori,
+  legF: COL.kimono,
+  legB: COL.kimono,
+  head: COL.skin,
+};
+
 export class DuelScene extends Phaser.Scene {
   private player!: Fighter;
   private enemy!: Fighter;
@@ -248,7 +256,11 @@ export class DuelScene extends Phaser.Scene {
     target.applyHit(result);
     for (const h of result.hits) {
       this.gore.spray(h.cutPoint, h.severed ? 16 : 7);
-      if (h.severed) this.gore.severDecal(h.cutPoint);
+      if (h.severed) {
+        this.gore.severDecal(h.cutPoint);
+        const color = LIMB_COLOR[h.limbId] ?? (target === this.enemy ? COL.haoriEnemy : COL.haori);
+        this.gore.flyLimb(h.cutPoint, target.facing, color);
+      }
     }
   }
 

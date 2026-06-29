@@ -8,7 +8,7 @@ export class Gore {
   private emitter: Phaser.GameObjects.Particles.ParticleEmitter;
   private decals: Phaser.GameObjects.Graphics;
 
-  constructor(scene: Phaser.Scene) {
+  constructor(private scene: Phaser.Scene) {
     if (!scene.textures.exists('blood-dot')) {
       const g = scene.make.graphics({ x: 0, y: 0 }, false);
       g.fillStyle(0xffffff, 1);
@@ -50,5 +50,42 @@ export class Gore {
         Phaser.Math.Between(2, 4),
       );
     }
+  }
+
+  /** A severed limb piece flung outward — arcs, spins, falls, fades. */
+  flyLimb(at: Pt, dir: 1 | -1, color: number): void {
+    if (Gore.reduced) return;
+    const piece = this.scene.add.graphics().setDepth(45).setPosition(at.x, at.y);
+    const len = Phaser.Math.Between(20, 30);
+    const r = 7;
+    piece.lineStyle(2 * r + 3, COL.outline, 1);
+    piece.beginPath();
+    piece.moveTo(-len / 2, 0);
+    piece.lineTo(len / 2, 0);
+    piece.strokePath();
+    piece.lineStyle(2 * r, color, 1);
+    piece.beginPath();
+    piece.moveTo(-len / 2, 0);
+    piece.lineTo(len / 2, 0);
+    piece.strokePath();
+    piece.fillStyle(COL.blood, 1).fillCircle(-len / 2, 0, r); // bloody stump end
+
+    const vx = dir * Phaser.Math.Between(120, 220);
+    const vy = -Phaser.Math.Between(180, 300);
+    const spin = Phaser.Math.Between(-360, 360);
+    const state = { t: 0 };
+    this.scene.tweens.add({
+      targets: state,
+      t: 1,
+      duration: 900,
+      onUpdate: () => {
+        const dt = state.t * 0.9; // seconds-ish
+        piece.x = at.x + vx * dt;
+        piece.y = at.y + vy * dt + 0.5 * 900 * dt * dt; // gravity arc
+        piece.angle = spin * state.t;
+        piece.alpha = 1 - Math.max(0, (state.t - 0.6) / 0.4);
+      },
+      onComplete: () => piece.destroy(),
+    });
   }
 }
