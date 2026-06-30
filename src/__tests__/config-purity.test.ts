@@ -14,9 +14,9 @@ import ts from 'typescript';
 // (e.g. `Number('500')`, `+('3' + '0')`) so a constant cannot be hidden as a string.
 //
 // Enforcement is two-tier:
-//   1. core/** is held to ZERO violations (the deterministic, render-free sim must be pure),
-//      except CORE_GRANDFATHERED — files whose literals are real tunables a later milestone
-//      moves to config (anim.ts: motion-feel constants → M1).
+//   1. core/** is held to ZERO violations (the deterministic, render-free sim must be pure).
+//      CORE_GRANDFATHERED (now empty) once exempted files whose literals were tunables a later
+//      milestone moved to config; M1 retired the last (anim.ts → config/anim.ts).
 //   2. game/** (+ grandfathered core) is ratcheted against a committed per-file value MULTISET:
 //      the build fails on any new OR substituted value; removals (debt paydown) are allowed.
 
@@ -26,7 +26,8 @@ const ALLOWED = new Set([0, 1, 2]);
 const BASELINE_PATH = join(ROOT, 'src/__tests__/config-purity.baseline.json');
 
 // core/ files exempt from the zero-gate, with the milestone that purifies them.
-const CORE_GRANDFATHERED = new Set<string>(['src/core/anim.ts']); // motion-feel constants → M1
+// M1 retired the last one (anim.ts → config/anim.ts), so ALL of core/ is now literal-free.
+const CORE_GRANDFATHERED = new Set<string>([]);
 
 type Violation = { file: string; line: number; value: number; kind: string };
 

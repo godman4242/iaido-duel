@@ -9,9 +9,15 @@ import { DuelScene } from './game/scenes/DuelScene';
 new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'game',
-  width: GAME_W,
-  height: GAME_H,
   backgroundColor: '#0d0d0d',
+  // Calibrated canvas: render at the native stage size and LETTERBOX to fit the viewport, centered,
+  // so the vector art scales crisply at any window size (spec §4.2 stage size; Tells 17 & 21).
+  scale: {
+    mode: Phaser.Scale.FIT,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+    width: GAME_W,
+    height: GAME_H,
+  },
   scene: [BootScene, TitleScene, PrologueScene, TownScene, DuelScene],
   render: { antialias: true, roundPixels: false },
 });

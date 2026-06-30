@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { GAME_W, GAME_H } from '../../config';
+import { ARENA_MARGIN } from '../../config/layout';
 import { COL } from '../../palette';
 import { Fighter } from '../fighter/Fighter';
 import { GestureInput } from '../input/GestureInput';
@@ -8,15 +9,38 @@ import { BladeTrail } from '../vfx/BladeTrail';
 import { STANCES, counterBonus, StanceId } from '../../core/stance';
 import { Focus } from '../../core/focus';
 import { resolveSlash, SlashInput, SlashResult } from '../../core/slash';
+import { DrawnStroke } from '../../core/DrawnStroke';
+import { jumpArcPoint } from '../../core/trajectory';
 import { Gore } from '../vfx/Gore';
 import { Hud } from '../ui/Hud';
 import { AIController } from '../ai/AIController';
 import { Forest } from '../background/Forest';
 import { playSlash, playImpact, playStanceSwitch, playGrunt, resumeAudio, toggleMuted } from '../audio/sfx';
 import { Combo } from '../../core/combo';
+import { SLASH_FRAMES, FIXED_DT_MS } from '../../config/timing';
+import {
+  CRIT_MULT,
+  JUMP_APEX,
+  JUMP_MS,
+  LAUNCH_DMG_MULT,
+  LAUNCH_KNOCKUP,
+  STAB_DMG_MULT,
+  SPECIAL_MS,
+  BLOOD_COUNT,
+  BLOOD_COUNT_SEVERED,
+  MULTI_FOE_SPACING,
+  MULTI_FOE_MAX,
+} from '../../config/combat';
+import { Pt } from '../../core/vec';
 
 const GROUND_Y = GAME_H - 96;
 const MOVE_SPEED = 0.28; // px per ms
+
+/** Per-stance slash recovery lock (frames → ms): Light short/fast, Heavy long/slow (Tell 6). */
+const slashRecoveryMs = (stance: StanceId): number => {
+  const f = SLASH_FRAMES[stance];
+  return (f.windup + f.active + f.recovery) * FIXED_DT_MS;
+};
 
 const LIMB_COLOR: Record<string, number> = {
   armF: COL.haori,
@@ -28,7 +52,8 @@ const LIMB_COLOR: Record<string, number> = {
 
 export class DuelScene extends Phaser.Scene {
   private player!: Fighter;
-  private enemy!: Fighter;
+  private enemy!: Fighter; // the AI ronin (foes[0]) — the duel ends on its / the player's death
+  private foes: Fighter[] = []; // every damageable foe: the ronin + optional static sparring dummies
   private trail!: BladeTrail;
   private gore!: Gore;
   private hud!: Hud;
@@ -57,6 +82,19 @@ export class DuelScene extends Phaser.Scene {
       skin: { haori: COL.haoriEnemy, haoriShade: COL.haoriEnemyShade },
       atkPlusWeapon: 7,
     });
+    this.foes = [this.enemy];
+    // ?foes=N adds static sparring dummies beside the ronin so one stroke can cross several foes
+    // (Tell 5 — HP damage, multi-foe, instakills none). Default 1 = the unchanged 1-v-1 AI duel.
+    const requested = Number(new URLSearchParams(location.search).get('foes')) || 1;
+    const extra = Math.min(MULTI_FOE_MAX, Math.max(1, requested)) - 1;
+    for (let i = 1; i <= extra; i++) {
+      const dummy = new Fighter(this, this.enemy.x + i * MULTI_FOE_SPACING, GROUND_Y, -1, {
+        stance: 'balanced',
+        skin: { haori: COL.haoriEnemy, haoriShade: COL.haoriEnemyShade },
+        atkPlusWeapon: 7,
+      });
+      this.foes.push(dummy);
+    }
 
     this.trail = new BladeTrail(this);
     this.gore = new Gore(this);
@@ -71,7 +109,7 @@ export class DuelScene extends Phaser.Scene {
     this.combo.reset();
     this.cameras.main.setZoom(1);
     this.graceUntil = this.time.now + 1500;
-    for (const f of [this.player, this.enemy]) {
+    for (const f of [this.player, ...this.foes]) {
       this.tweens.add({ targets: f, alpha: 0.35, duration: 150, yoyo: true, repeat: 4 });
     }
 
@@ -83,9 +121,9 @@ export class DuelScene extends Phaser.Scene {
         this.playerWindupUntil = this.time.now + 360; // the AI can react to an incoming slash
       },
       onMove: (p) => this.trail.push(p),
-      onEnd: (path, gesture) => {
+      onEnd: (stroke) => {
         this.trail.end();
-        this.handleGesture(path, gesture);
+        this.handleGesture(stroke);
       },
     });
 
@@ -154,32 +192,42 @@ export class DuelScene extends Phaser.Scene {
     playStanceSwitch();
   }
 
-  private doSlash(path: { x: number; y: number }[]) {
+  /** A horizontal slash: the SMOOTHED stroke is the hit polyline; it damages EVERY foe it crosses
+   *  (HP-based, instakills none at full HP — Tell 5). Blood gouts along the cut vector (Tell 19). */
+  private doSlash(stroke: DrawnStroke) {
     if (this.time.now < this.busyUntil) return;
-    this.busyUntil = this.time.now + 220;
-    this.player.slash();
-
     const stance = STANCES[this.player.stanceId];
-    const input: SlashInput = {
-      path,
-      origin: this.player.slashOrigin(),
-      reach: stance.reach,
-      dmgMult: stance.dmgMult,
-      crit: this.playerFocus.isCrit(),
-      counter: counterBonus(this.player.stanceId, this.enemy.stanceId),
-    };
-    const result = resolveSlash(
-      input,
-      this.enemy.worldLimbs(),
-      this.player.atkPlusWeapon,
-      STANCES[this.enemy.stanceId].damageTakenMult,
-    );
+    this.busyUntil = this.time.now + slashRecoveryMs(this.player.stanceId); // per-stance lock (Tell 6)
+    this.player.slash();
     playSlash();
-    this.applyAndSpray(this.enemy, result);
-    if (result.hits.length && !this.enemy.blocking && !this.inGrace()) {
+
+    let anyHit = false;
+    let severedTotal = 0;
+    for (const foe of this.foes) {
+      if (foe.isDead) continue;
+      const input: SlashInput = {
+        path: stroke.points,
+        origin: this.player.slashOrigin(),
+        reach: stance.reach,
+        dmgMult: stance.dmgMult,
+        crit: this.playerFocus.isCrit(),
+        counter: counterBonus(this.player.stanceId, foe.stanceId),
+      };
+      const result = resolveSlash(
+        input,
+        foe.worldLimbs(),
+        this.player.atkPlusWeapon,
+        STANCES[foe.stanceId].damageTakenMult,
+      );
+      this.applyAndSpray(foe, result, stroke.dir);
+      if (result.hits.length && !foe.blocking && !this.inGrace()) {
+        anyHit = true;
+        severedTotal += result.hits.filter((h) => h.severed).length;
+      }
+    }
+    if (anyHit) {
       playImpact();
-      const severed = result.hits.filter((h) => h.severed).length;
-      this.playerFocus.gain(16 + severed * 10);
+      this.playerFocus.gain(16 + severedTotal * 10);
       this.combo.hit(this.time.now);
     } else {
       this.combo.reset();
@@ -196,28 +244,51 @@ export class DuelScene extends Phaser.Scene {
     this.time.delayedCall(200, () => new KillBeat(this).play(playerWon));
   }
 
-  private handleGesture(path: { x: number; y: number }[], gesture: string) {
+  /** Direction = verb (spec §D.1): horizontal→slash, up→jump, big-up→launch, down→stab. */
+  private handleGesture(stroke: DrawnStroke) {
     if (this.over || this.time.now < this.busyUntil) return;
-    switch (gesture) {
+    switch (stroke.verb) {
       case 'slash':
-        this.doSlash(path);
+        this.doSlash(stroke);
         break;
       case 'jump':
-        this.busyUntil = this.time.now + 480;
-        this.tweens.add({ targets: this.player, y: GROUND_Y - 95, duration: 230, yoyo: true, ease: 'Quad.easeOut' });
+        this.doJump(stroke);
         break;
       case 'launch':
-        this.dealSpecial(0.9, 130);
+        this.dealSpecial(LAUNCH_DMG_MULT, LAUNCH_KNOCKUP, { x: 0, y: -1 });
         break;
       case 'stab':
-        this.dealSpecial(1.45, 0);
+        this.dealSpecial(STAB_DMG_MULT, 0, { x: this.player.facing, y: 0 });
         break;
     }
   }
 
+  /** Jump arc — BEGINS at the line's start point, ENDS at its endpoint (Tell 4). */
+  private doJump(stroke: DrawnStroke) {
+    this.busyUntil = this.time.now + JUMP_MS;
+    const clampX = (x: number) => Phaser.Math.Clamp(x, ARENA_MARGIN, GAME_W - ARENA_MARGIN);
+    const from: Pt = { x: clampX(stroke.start.x), y: GROUND_Y };
+    const to: Pt = { x: clampX(stroke.end.x), y: GROUND_Y };
+    const st = { t: 0 };
+    this.tweens.add({
+      targets: st,
+      t: 1,
+      duration: JUMP_MS,
+      onUpdate: () => {
+        const p = jumpArcPoint(from, to, JUMP_APEX, st.t);
+        this.player.x = p.x;
+        this.player.y = p.y;
+      },
+      onComplete: () => {
+        this.player.x = to.x;
+        this.player.y = GROUND_Y;
+      },
+    });
+  }
+
   /** A close-range special move (launch / stab): connects if the enemy is within reach. */
-  private dealSpecial(mult: number, knockUp: number) {
-    this.busyUntil = this.time.now + 320;
+  private dealSpecial(mult: number, knockUp: number, dir: Pt) {
+    this.busyUntil = this.time.now + SPECIAL_MS;
     this.player.slash();
     playSlash();
 
@@ -232,12 +303,12 @@ export class DuelScene extends Phaser.Scene {
       this.player.atkPlusWeapon *
       stance.dmgMult *
       mult *
-      (crit ? 1.3 : 1) *
+      (crit ? CRIT_MULT : 1) * // CONTRACT 3× (was a stray 1.3× here — DIVERGENCES.md)
       counterBonus(this.player.stanceId, this.enemy.stanceId);
     const dmg = Math.round(base * STANCES[this.enemy.stanceId].damageTakenMult);
     this.enemy.health = Math.max(0, this.enemy.health - dmg);
     this.enemy.redraw();
-    this.gore.spray({ x: this.enemy.x, y: this.enemy.y - 46 }, 9);
+    this.gore.spray({ x: this.enemy.x, y: this.enemy.y - 46 }, BLOOD_COUNT, dir);
     playImpact();
     this.playerFocus.gain(14);
     if (knockUp > 0) {
@@ -249,8 +320,8 @@ export class DuelScene extends Phaser.Scene {
     return this.time.now < this.graceUntil;
   }
 
-  /** Apply a slash result to a fighter and spray blood / sever decals for each hit. */
-  private applyAndSpray(target: Fighter, result: SlashResult) {
+  /** Apply a slash result to a fighter and spray blood / sever decals for each hit, along `dir`. */
+  private applyAndSpray(target: Fighter, result: SlashResult, dir: Pt) {
     if (!result.hits.length) return;
     if (target.blocking || this.inGrace()) {
       this.spark(result.hits[0].cutPoint);
@@ -258,10 +329,10 @@ export class DuelScene extends Phaser.Scene {
     }
     target.applyHit(result);
     for (const h of result.hits) {
-      this.gore.spray(h.cutPoint, h.severed ? 16 : 7);
+      this.gore.spray(h.cutPoint, h.severed ? BLOOD_COUNT_SEVERED : BLOOD_COUNT, dir);
       if (h.severed) {
         this.gore.severDecal(h.cutPoint);
-        const color = LIMB_COLOR[h.limbId] ?? (target === this.enemy ? COL.haoriEnemy : COL.haori);
+        const color = LIMB_COLOR[h.limbId] ?? (target === this.player ? COL.haori : COL.haoriEnemy);
         this.gore.flyLimb(h.cutPoint, target.facing, color);
       }
     }
@@ -277,7 +348,8 @@ export class DuelScene extends Phaser.Scene {
     this.player.health = Math.max(0, this.player.health - dmg);
     this.player.hitAnim();
     this.player.redraw();
-    this.gore.spray({ x: this.player.x, y: this.player.y - 46 }, 9);
+    // blood gouts away from the attacker (along the enemy→player vector)
+    this.gore.spray({ x: this.player.x, y: this.player.y - 46 }, BLOOD_COUNT, { x: this.player.x - this.enemy.x, y: 0 });
     playImpact();
     playGrunt();
   }
@@ -307,7 +379,7 @@ export class DuelScene extends Phaser.Scene {
       let dir = 0;
       if (this.keys.left.isDown) dir -= 1;
       if (this.keys.right.isDown) dir += 1;
-      this.player.x = Phaser.Math.Clamp(this.player.x + dir * MOVE_SPEED * delta, 60, GAME_W - 60);
+      this.player.x = Phaser.Math.Clamp(this.player.x + dir * MOVE_SPEED * delta, ARENA_MARGIN, GAME_W - ARENA_MARGIN);
       playerMoving = dir !== 0;
 
       this.player.facing = this.enemy.x >= this.player.x ? 1 : -1;
@@ -319,9 +391,10 @@ export class DuelScene extends Phaser.Scene {
       this.trail.update(delta);
     }
 
-    // animate both fighters every frame (incl. the death fall while finishing)
+    // animate every fighter each frame (incl. the death fall while finishing); dummies idle in place
     this.player.update(delta, playerMoving);
     this.enemy.update(delta, enemyMoving);
+    for (const f of this.foes) if (f !== this.enemy) f.update(delta, false);
     this.hud.update(this.combo.value(this.time.now));
   }
 }

@@ -36,6 +36,24 @@ describe('FighterAnimator', () => {
     run(a, 400); // let it finish
     expect(a.actionName()).toBe('none');
   });
+  it('per-stance arcs (Tell 6): Light sweeps a longer arc AND finishes faster than Heavy', () => {
+    const runSlash = (stance: 'light' | 'heavy') => {
+      const a = new FighterAnimator();
+      a.startSlash(stance);
+      let maxSwordX = -Infinity;
+      let ms = 0;
+      for (let t = 0; t < 1200; t += 8) {
+        const p = a.update(8);
+        maxSwordX = Math.max(maxSwordX, p.sword.x);
+        if (a.actionName() !== 'slash') { ms = t; break; }
+      }
+      return { maxSwordX, ms };
+    };
+    const light = runSlash('light');
+    const heavy = runSlash('heavy');
+    expect(light.maxSwordX).toBeGreaterThan(heavy.maxSwordX); // Light reaches a longer arc
+    expect(light.ms).toBeLessThan(heavy.ms); // Light's swing is faster (fewer frames)
+  });
   it('guard=telegraph blends toward the wind-up and holds', () => {
     const a = new FighterAnimator();
     a.setGuard('telegraph');

@@ -58,6 +58,25 @@ export const lerpPose = (a: Pose, b: Pose, t: number): Pose => {
   return out;
 };
 
+// Sword-arm joints whose displacement from idle defines the slash arc's reach/amplitude.
+const ARM_JOINTS: Joint[] = ['shoulderF', 'elbowF', 'handF', 'sword'];
+
+/**
+ * Scale a slash keyframe's ARM sweep by `k` (its deviation from IDLE), leaving the rest of the body
+ * untouched. Drives per-stance arc geometry (Tell 6): Light reach > balanced ⇒ k>1 ⇒ longer sweeping
+ * arc; Heavy reach < balanced ⇒ k<1 ⇒ short heavy arc.
+ */
+export const scaleArc = (pose: Pose, k: number): Pose => {
+  const out = { ...pose };
+  for (const j of ARM_JOINTS) {
+    out[j] = {
+      x: IDLE_POSE[j].x + (pose[j].x - IDLE_POSE[j].x) * k,
+      y: IDLE_POSE[j].y + (pose[j].y - IDLE_POSE[j].y) * k,
+    };
+  }
+  return out;
+};
+
 const cap = (p: Pt, q: Pt, r: number, root: Pt, f: 1 | -1): Capsule => ({
   a: { x: root.x + f * p.x, y: root.y + p.y },
   b: { x: root.x + f * q.x, y: root.y + q.y },

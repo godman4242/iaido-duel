@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { Limb, SlashResult } from '../../core/slash';
 import { StanceId } from '../../core/stance';
+import { SCARF } from '../../config/anim';
 import { IDLE_POSE, SLASH_POSE, Pose, worldLimbs } from './Skeleton';
 import { FighterAnimator, GuardLevel } from './FighterAnimator';
 import { drawSkeleton, Skin } from './drawFighter';
@@ -25,9 +26,14 @@ export class Fighter extends Phaser.GameObjects.Container {
   private animator = new FighterAnimator();
   private gfx: Phaser.GameObjects.Graphics;
   private skin?: Skin;
+  // secondary-motion drivers: smoothed local horizontal velocity + a continuous flutter clock
+  private lastX: number;
+  private flowX = 0;
+  private secPhase = 0;
 
   constructor(scene: Phaser.Scene, x: number, y: number, facing: 1 | -1, opts: FighterOpts = {}) {
     super(scene, x, y);
+    this.lastX = x;
     this.facing = facing;
     this.scaleX = facing; // mirror the local drawing
     this.maxHealth = opts.maxHealth ?? 100;
@@ -63,6 +69,12 @@ export class Fighter extends Phaser.GameObjects.Container {
 
   /** Advance the animation one frame and render. `moving` drives the walk vs idle base layer. */
   update(dtMs: number, moving: boolean): void {
+    // secondary motion: estimate local (facing-relative) velocity, low-pass it, advance flutter clock
+    const worldVel = dtMs > 0 ? (this.x - this.lastX) / dtMs : 0;
+    this.lastX = this.x;
+    const localVel = worldVel * this.facing;
+    this.flowX += (localVel - this.flowX) * SCARF.flowSmoothing;
+    this.secPhase += dtMs;
     this.animator.setMoving(moving);
     this.setPose(this.animator.update(dtMs));
   }
@@ -71,7 +83,7 @@ export class Fighter extends Phaser.GameObjects.Container {
     this.animator.setGuard(g);
   }
   slash(): void {
-    this.animator.startSlash();
+    this.animator.startSlash(this.stanceId);
   }
   hitAnim(): void {
     this.animator.startHit();
@@ -89,7 +101,11 @@ export class Fighter extends Phaser.GameObjects.Container {
 
   redraw(): void {
     this.gfx.clear();
-    drawSkeleton(this.gfx, this.pose, { severed: this.severed, skin: this.skin });
+    drawSkeleton(this.gfx, this.pose, {
+      severed: this.severed,
+      skin: this.skin,
+      scarf: { flow: this.flowX, phase: this.secPhase },
+    });
   }
 
   get isDead(): boolean {

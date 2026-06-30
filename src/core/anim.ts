@@ -1,12 +1,15 @@
-// Pure animation math: easing + a segment phase-clock. No Phaser, no side effects.
+// Pure animation math: easing + a segment phase-clock + procedural locomotion offsets.
+// No Phaser, no side effects. All feel constants come from config/anim.ts so this module is
+// literal-free (spec §3 central-config rule — core/ is held to ZERO bare gameplay literals).
+import { WALK, IDLE_BREATH, EASE } from '../config/anim';
 
 export const clamp01 = (t: number): number => (t < 0 ? 0 : t > 1 ? 1 : t);
 
 export const easeOutCubic = (t: number): number => {
   const x = clamp01(t);
-  return 1 - Math.pow(1 - x, 3);
+  return 1 - Math.pow(1 - x, EASE.cubicExp);
 };
-export const easeInOutSine = (t: number): number => 0.5 - 0.5 * Math.cos(Math.PI * clamp01(t));
+export const easeInOutSine = (t: number): number => EASE.half - EASE.half * Math.cos(Math.PI * clamp01(t));
 export const easeInQuad = (t: number): number => {
   const x = clamp01(t);
   return x * x;
@@ -39,13 +42,13 @@ export function walkOffsets(phase: number, amp = 1): Offsets {
   const swing = Math.sin(a);
   const bob = Math.cos(2 * a); // two bobs per stride
   return {
-    footF: { x: 18 * swing * amp, y: -9 * Math.max(0, swing) * amp },
-    kneeF: { x: 9 * swing * amp, y: -2 * Math.max(0, swing) * amp },
-    footB: { x: -18 * swing * amp, y: -9 * Math.max(0, -swing) * amp },
-    kneeB: { x: -9 * swing * amp, y: -2 * Math.max(0, -swing) * amp },
-    pelvis: { x: 0, y: -3 * bob * amp },
-    chest: { x: 0, y: -3 * bob * amp },
-    handF: { x: -7 * swing * amp, y: 0 }, // arm counter-swings the front leg
+    footF: { x: WALK.footSwing * swing * amp, y: -WALK.footLift * Math.max(0, swing) * amp },
+    kneeF: { x: WALK.kneeSwing * swing * amp, y: -WALK.kneeLift * Math.max(0, swing) * amp },
+    footB: { x: -WALK.footSwing * swing * amp, y: -WALK.footLift * Math.max(0, -swing) * amp },
+    kneeB: { x: -WALK.kneeSwing * swing * amp, y: -WALK.kneeLift * Math.max(0, -swing) * amp },
+    pelvis: { x: 0, y: -WALK.bob * bob * amp },
+    chest: { x: 0, y: -WALK.bob * bob * amp },
+    handF: { x: -WALK.armSwing * swing * amp, y: 0 }, // arm counter-swings the front leg
   };
 }
 
@@ -53,10 +56,10 @@ export function walkOffsets(phase: number, amp = 1): Offsets {
 export function idleOffsets(phase: number, amp = 1): Offsets {
   const breathe = Math.sin(phase * TAU);
   return {
-    chest: { x: 0, y: -1.5 * breathe * amp },
-    neck: { x: 0, y: -1.3 * breathe * amp },
-    head: { x: 0, y: -1.1 * breathe * amp },
-    hat: { x: 0, y: -1.1 * breathe * amp },
-    handF: { x: 0, y: 1.0 * breathe * amp },
+    chest: { x: 0, y: -IDLE_BREATH.chest * breathe * amp },
+    neck: { x: 0, y: -IDLE_BREATH.neck * breathe * amp },
+    head: { x: 0, y: -IDLE_BREATH.head * breathe * amp },
+    hat: { x: 0, y: -IDLE_BREATH.hat * breathe * amp },
+    handF: { x: 0, y: IDLE_BREATH.hand * breathe * amp },
   };
 }

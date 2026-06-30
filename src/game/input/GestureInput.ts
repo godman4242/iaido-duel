@@ -1,14 +1,18 @@
 import Phaser from 'phaser';
 import { Pt } from '../../core/vec';
-import { classifyGesture, Gesture } from '../../core/gesture';
+import { buildDrawnStroke, DrawnStroke } from '../../core/DrawnStroke';
 
 export type GestureCallbacks = {
   onStart: (p: Pt) => void;
   onMove: (p: Pt) => void;
-  onEnd: (path: Pt[], gesture: Gesture) => void;
+  onEnd: (stroke: DrawnStroke) => void;
 };
 
-/** Captures the pointer-drawn polyline and classifies it into a combat gesture. */
+/**
+ * Captures the pointer-drawn polyline and resolves it into a canonical DrawnStroke (resampled,
+ * smoothed, classified). Mouse and touch feed the same Pt[] here, so they produce the SAME
+ * DrawnStroke — the parity guarantee (spec §3) lives in core/DrawnStroke, not in this adapter.
+ */
 export class GestureInput {
   lastLatencyMs = 0;
   private path: Pt[] = [];
@@ -35,7 +39,7 @@ export class GestureInput {
     scene.input.on('pointerup', () => {
       if (!this.drawing) return;
       this.drawing = false;
-      cb.onEnd(this.path, classifyGesture(this.path));
+      cb.onEnd(buildDrawnStroke(this.path));
     });
   }
 }

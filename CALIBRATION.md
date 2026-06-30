@@ -19,12 +19,12 @@ waiting on footage.
 |---|---|---|---|---|---|
 | 1 | Stage size & aspect | exact px W×H | 1024×576 16:9 `layout.ts` | widescreen letterbox; native px unconfirmed | INFERRED |
 | 2 | Palette (eyedropper) | exact hex, ±0 locked | `palette.ts` COL | navy player haori vs oxblood enemy; saturated red blood over muted green/teal forest | INFERRED |
-| 3 | Slash timing per stance | ±1 frame | `timing.ts` SLASH_FRAMES | not frame-stepped | INFERRED |
-| 4 | Blade-trail render | width ±1px, fade ±20ms | (M1 VFX) | reads as a **blue** swept ribbon following the drawn line | INFERRED |
+| 3 | Slash timing per stance | ±1 frame | `timing.ts` SLASH_FRAMES | M1: per-stance frames drive the avatar swing (Light fast/long, Heavy slow/short); not yet Ruffle-stepped | INFERRED |
+| 4 | Blade-trail render | width ±1px, fade ±20ms | `combat.ts` BLADE_* | M1: two-layer tapered ribbon — chi-blue edge + white core, pinched tips, fat mid; width/fade/taper in config. Matches survey "blue ribbon"; not yet ±1px-measured | INFERRED |
 | 5 | Camera (baseline + impact) | mag ±10%, dur ±20ms | (M2) | side-scroll, zooms out when fighters separate | INFERRED |
 | 6 | Kill/finisher beat | freeze ±1f, ramp ±20ms | (M2) | red full-screen flash on a duel-ending blow; "YOU WIN" splash | INFERRED |
 | 7 | Shunpo | factor + drain | (M2) | not observed in Duels footage → candidate DESIGN-FROM-LORE | INFERRED |
-| 8 | Blood FX | dir/count/decals | (M1 Gore) | red spray at hit point, along the cut | INFERRED |
+| 8 | Blood FX | dir/count/decals | `combat.ts` BLOOD_* | M1: directional gout — emitter angle re-aimed onto the cut vector ±42° cone (bright red over muted ground); count/spread/speed/gravity in config; sever decals + flung limbs retained. Count/spread not yet footage-measured | INFERRED |
 | 9 | Parallax | layer count + ratios | (M1 bg) | sky / mountains / mid silhouettes / foreground band | INFERRED |
 | 10 | Audio-cue timing | ±1 frame | `audio.ts` | menu vs combat music separate; no audio analysis yet | INFERRED |
 | 11 | HUD layout & appearance | pos ±4px, color exact hex | (M4 Hud) | coins TOP-LEFT, EXP+minimap TOP-RIGHT, HP/Chi/AP + stance bottom-left, skill bar bottom; floating enemy HP bars | INFERRED |

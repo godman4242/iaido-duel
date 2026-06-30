@@ -8,3 +8,6 @@
 export const GAME_W = 1024; // INFERRED — calibration target: exact native Flash stage width
 export const GAME_H = 576; // INFERRED — calibration target: exact native Flash stage height
 export const ASPECT = GAME_W / GAME_H; // INFERRED — derived from the above
+
+// Horizontal margin keeping a fighter inside the arena (movement + jump clamps). INFERRED.
+export const ARENA_MARGIN = 60;

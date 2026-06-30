@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { COL } from '../../palette';
+import { SCARF, SCARF_FLUTTER_RAD_PER_MS } from '../../config/anim';
 import { Pose } from './Skeleton';
 
 type G = Phaser.GameObjects.Graphics;
@@ -51,8 +52,48 @@ function outlinedPoly(g: G, pts: number[][], fill: number, ow = 3): void {
   g.strokePath();
 }
 
+/** A tapered cloth ribbon (neck→tail) filled with the scarf color + black outline (flat-vector look). */
+function scarfRibbon(g: G, pts: number[][], baseHalf: number): void {
+  const n = pts.length;
+  if (n < 2) return;
+  const left: number[][] = [];
+  const right: number[][] = [];
+  for (let i = 0; i < n; i++) {
+    const a = pts[Math.max(0, i - 1)];
+    const b = pts[Math.min(n - 1, i + 1)];
+    const tx = b[0] - a[0];
+    const ty = b[1] - a[1];
+    const L = Math.hypot(tx, ty) || 1;
+    const hw = baseHalf * (1 - i / (n - 1)); // taper to a point at the tail
+    const nx = (-ty / L) * hw;
+    const ny = (tx / L) * hw;
+    left.push([pts[i][0] + nx, pts[i][1] + ny]);
+    right.push([pts[i][0] - nx, pts[i][1] - ny]);
+  }
+  outlinedPoly(g, left.concat(right.reverse()), COL.scarf);
+}
+
+/** Build + draw the flowing scarf tail off the neck; `flow` is local body velocity, `phase` a clock. */
+function drawScarf(g: G, p: Pose, flow: number, phase: number): void {
+  const ax = p.neck.x + SCARF.anchorX;
+  const ay = p.neck.y + SCARF.anchorY;
+  const flowDisp = Math.max(-SCARF.flowMax, Math.min(SCARF.flowMax, -flow * SCARF.flowGain));
+  const tail: number[][] = [[ax, ay]];
+  for (let i = 1; i <= SCARF.segments; i++) {
+    const f = i / SCARF.segments;
+    const flutter = Math.sin(phase * SCARF_FLUTTER_RAD_PER_MS + i) * SCARF.sway * f;
+    tail.push([ax - SCARF.segLen * i + flowDisp * f, ay + SCARF.droop * i + flutter]);
+  }
+  scarfRibbon(g, tail, SCARF.width);
+}
+
 export type Skin = { haori: number; haoriShade: number };
-export type DrawOpts = { severed: Set<string>; silhouette?: boolean; skin?: Skin };
+export type DrawOpts = {
+  severed: Set<string>;
+  silhouette?: boolean;
+  skin?: Skin;
+  scarf?: { flow: number; phase: number };
+};
 
 /**
  * Draw the samurai in LOCAL coords (origin at pelvis, +x forward, +y down).
@@ -87,6 +128,8 @@ export function drawSkeleton(g: G, p: Pose, opts: DrawOpts): void {
     g.fillPath();
     return;
   }
+  // flowing scarf — drawn backmost so the body overlaps its neck end and the tail streams behind
+  if (opts.scarf && !cut.has('head')) drawScarf(g, p, opts.scarf.flow, opts.scarf.phase);
   // back leg (white hakama, behind)
   if (!cut.has('legB')) {
     shaded(g, p.hipB.x, p.hipB.y, p.kneeB.x, p.kneeB.y, 7, COL.kimonoShade, COL.kimono2);

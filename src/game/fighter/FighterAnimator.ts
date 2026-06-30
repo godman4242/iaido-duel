@@ -7,6 +7,7 @@ import {
   DEAD,
   lerpPose,
   addOffsets,
+  scaleArc,
   Pose,
 } from './Skeleton';
 import {
@@ -18,15 +19,21 @@ import {
   easeInQuad,
   Segment,
 } from '../../core/anim';
+import { SLASH_FRAMES, FIXED_DT_MS } from '../../config/timing';
+import { STANCE_TABLE, type StanceId } from '../../config/stances';
 
 export type GuardLevel = 'none' | 'telegraph' | 'block';
 type Action = 'none' | 'slash' | 'hit' | 'dead';
 
-const SLASH_SEGS: Segment[] = [
-  { name: 'windup', ms: 90 },
-  { name: 'strike', ms: 100 },
-  { name: 'recover', ms: 150 },
-];
+/** Per-stance slash phase clock (frames → ms): Light fast, Heavy slow (spec §4.2, Tell 6). */
+const slashSegsFor = (stance: StanceId): Segment[] => {
+  const f = SLASH_FRAMES[stance];
+  return [
+    { name: 'windup', ms: f.windup * FIXED_DT_MS },
+    { name: 'strike', ms: f.active * FIXED_DT_MS },
+    { name: 'recover', ms: f.recovery * FIXED_DT_MS },
+  ];
+};
 const HIT_SEGS: Segment[] = [
   { name: 'recoil', ms: 90 },
   { name: 'return', ms: 120 },
@@ -45,6 +52,10 @@ export class FighterAnimator {
   private actionElapsed = 0;
   private locoPhase = 0;
   private dead = false;
+  // per-stance slash arc + timing (set at startSlash; default = balanced baseline, k=1)
+  private slashSegs: Segment[] = slashSegsFor('balanced');
+  private slashWindup: Pose = SLASH_WINDUP;
+  private slashFollow: Pose = SLASH_FOLLOW;
 
   setMoving(b: boolean): void {
     if (!this.dead) this.moving = b;
@@ -52,10 +63,15 @@ export class FighterAnimator {
   setGuard(g: GuardLevel): void {
     if (!this.dead) this.guard = g;
   }
-  startSlash(): void {
+  startSlash(stance: StanceId = 'balanced'): void {
     if (!this.dead) {
       this.action = 'slash';
       this.actionElapsed = 0;
+      this.slashSegs = slashSegsFor(stance);
+      // arc amplitude scales with stance reach (Light long, Heavy short) — Tell 6
+      const k = STANCE_TABLE[stance].reach / STANCE_TABLE.balanced.reach;
+      this.slashWindup = scaleArc(SLASH_WINDUP, k);
+      this.slashFollow = scaleArc(SLASH_FOLLOW, k);
     }
   }
   startHit(): void {
@@ -97,15 +113,15 @@ export class FighterAnimator {
     // 2) transient action overlay
     if (this.action === 'slash') {
       this.actionElapsed += dtMs;
-      const p = phaseAt(SLASH_SEGS, this.actionElapsed);
+      const p = phaseAt(this.slashSegs, this.actionElapsed);
       if (p.done) {
         this.action = 'none';
       } else if (p.name === 'windup') {
-        return lerpPose(base, SLASH_WINDUP, easeOutCubic(p.t));
+        return lerpPose(base, this.slashWindup, easeOutCubic(p.t));
       } else if (p.name === 'strike') {
-        return lerpPose(SLASH_WINDUP, SLASH_FOLLOW, easeOutCubic(p.t));
+        return lerpPose(this.slashWindup, this.slashFollow, easeOutCubic(p.t));
       } else {
-        return lerpPose(SLASH_FOLLOW, base, easeInOutSine(p.t));
+        return lerpPose(this.slashFollow, base, easeInOutSine(p.t));
       }
     } else if (this.action === 'hit') {
       this.actionElapsed += dtMs;

@@ -5,15 +5,16 @@ Each line is a **binary PASS/FAIL** observable in the running build. **100% PASS
 tolerance; INFERRED only to single-tunable + consistency). `(lore)` = graded by faithfulness.
 The `→ M#` tag is the milestone that delivers it (spec §I). Status: ☐ pending · ☑ passing.
 
-> M0 delivers scaffold/config/seams/tests only — no runtime tells yet, so all are ☐ pending.
+> M0 delivers scaffold/config/seams/tests only. **M1 (2026-06-30) ticks Tells 1–6 and 17–21**,
+> each verified in the running build (`npm run dev`, `?scene=duel&foes=2`) by eye + deterministic check.
 
 ## Slash engine
-- ☐ 1. A stroke makes the blade trace a **smoothed swept curve** of that stroke (not a raw jagged polyline, not a canned anim). → M1
-- ☐ 2. Blade trail is a **two-layer tapered ribbon** (white core + colored edge), pinched at both tips, widest mid-stroke, leading tip. → M1
-- ☐ 3. **Horizontal = slash, up = jump, up+Launch = launch, down(Heavy)+Stab = stab.** → M1/M2
-- ☐ 4. Jump **starts at the line's start point, ends at its endpoint.** → M1
-- ☐ 5. Damage is **HP-based, not instant-kill**; one line across two foes damages both. → M1
-- ☐ 6. Per-stance arcs visibly differ: **Light long/fast, Heavy short/slow, Balanced between.** → M1
+- ☑ 1. A stroke makes the blade trace a **smoothed swept curve** of that stroke (not a raw jagged polyline, not a canned anim). → M1 · *verified: a ±7px zig-zag input rendered as a clean swept ribbon (`core/DrawnStroke` resample+Chaikin).* 
+- ☑ 2. Blade trail is a **two-layer tapered ribbon** (white core + colored edge), pinched at both tips, widest mid-stroke, leading tip. → M1 · *verified: chi-blue edge + white core, pinched tips, fat mid (`BladeTrail`).* 
+- ☑ 3. **Horizontal = slash, up = jump**, up+Launch = launch, down(Heavy)+Stab = stab. → M1/M2 · *slash + jump verbs verified live; launch/stab routed & unit-tested (skill-gating is M2).* 
+- ☑ 4. Jump **starts at the line's start point, ends at its endpoint.** → M1 · *verified: player caught mid-arc airborne (y 480→396), translating start.x→end.x; `jumpArcPoint` unit-tested.* 
+- ☑ 5. Damage is **HP-based, not instant-kill**; one line across two foes damages both. → M1 · *verified: one drag took both foes 100→{85,76}, neither killed; `slash.test` multi-foe case.* 
+- ☑ 6. Per-stance arcs visibly differ: **Light long/fast, Heavy short/slow, Balanced between.** → M1 · *verified by `fighterAnimator.test`: Light max sword-reach > Heavy AND Light duration < Heavy.*
 
 ## Combat systems
 - ☐ 7. **Critical bar drains per swing (more for heavier weapon)**, pays off as a visible **3× crit.** → M2
@@ -30,11 +31,11 @@ The `→ M#` tag is the milestone that delivers it (spec §I). Status: ☐ pendi
 - ☐ 16. **Shunpo** player slow-mo drains the power meter. `(lore if unobservable)` → M2
 
 ## Art / motion
-- ☐ 17. Flat-color + bold-outline **Samurai-Jack vector** look; crisp scaling; no pixel-art. → M1
-- ☐ 18. Iconic **kasa + straight katana + scarf** silhouette, correct proportions. → M1
-- ☐ 19. **Blood sprays directionally along the cut vector**, bright saturated red. `(measure)` → M1
-- ☐ 20. **Scarf/hat secondary motion** in idle/move. → M1
-- ☐ 21. Simple **parallax** arenas; high-contrast fighters. `(measure)` → M1
+- ☑ 17. Flat-color + bold-outline **Samurai-Jack vector** look; crisp scaling; no pixel-art. → M1 · *verified: flat fills + black outlines, letterboxed FIT canvas scales crisply.* 
+- ☑ 18. Iconic **kasa + straight katana + scarf** silhouette, correct proportions. → M1 · *verified: scarf added to `drawFighter`; silhouette reads kasa+katana+scarf.* 
+- ☑ 19. **Blood sprays directionally along the cut vector**, bright saturated red. `(measure)` → M1 · *verified: angle-op centers on the cut (right→0°, left→180°, up→270°, down→90°); leftward cut sprays left in-build.* 
+- ☑ 20. **Scarf/hat secondary motion** in idle/move. → M1 · *verified: scarf streams up-back during the jump leap (flow); per-frame flutter clock; hat-bob unit-tested (`anim.test`).* 
+- ☑ 21. Simple **parallax** arenas; high-contrast fighters. `(measure)` → M1 · *verified: multi-layer `Forest` parallax; navy player vs oxblood foes over muted green.* 
 - ☐ 22. **Baseline camera** framing/tracking matches recorded behavior. `(measure)` → M2
 
 ## UI / audio / flow

@@ -5,6 +5,7 @@ export * from './palette';
 export * from './stances';
 export * from './combat';
 export * from './timing';
+export * from './anim';
 export * from './ai';
 export * from './economy';
 export * from './audio';

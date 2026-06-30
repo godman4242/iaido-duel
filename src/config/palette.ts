@@ -46,4 +46,7 @@ export const COL = {
   winRedDeep: 0x7e1018,
   haoriEnemy: 0x6b2030, // oxblood haori — the RONIN, distinct from the player's navy
   haoriEnemyShade: 0x47131f,
+  // flowing scarf (iconic SHS silhouette element) — warm vermilion, distinct from blood crimson
+  scarf: 0xc8472f,
+  scarfShade: 0x8f2a1a,
 } as const;

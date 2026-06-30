@@ -12,6 +12,11 @@ is logged here.
   to assert the contract result (a crit nick now reads `66`, was `28`). Asserted by
   `config/__tests__/contract-audits.test.ts`.
 
+- **(M1) Second `1.3×` crit leak fixed — `DuelScene.dealSpecial`.** The launch/stab special-move
+  path still hard-coded `crit ? 1.3 : 1`; M1 routes it through `CRIT_MULT` (3×) from config, so a
+  crit launch/stab now honors the contract like the slash path. (The config-purity ratchet also
+  removed the bare `1.3` from `game/`.)
+
 ## Intentional, rationale-backed deviations
 
 - **`ScriptedController` placed in `core/`, not `game/`** (spec §C lists it under `game/`).
@@ -33,15 +38,47 @@ is logged here.
   three verified by an adversarial probe. The baseline (mostly `game/` rendering: `Forest` 127,
   `drawFighter` 114, `Skeleton` 106, …) shrinks as M1–M5 give those modules their own config.
 
-- **`core/anim.ts` is the one grandfathered core module** (16 literals). Its walk/idle offsets
-  (foot-swing `±18`, bob/breath amplitudes) and easing constants are **secondary-motion feel**
-  tunables (spec §4.2 locomotion & secondary motion) — they belong in config, but that is M1
-  (motion-feel) work. Listed explicitly in `CORE_GRANDFATHERED` so the exception is visible, not silent.
+- **(RETIRED in M1) `core/anim.ts` grandfather.** It was the one grandfathered core module (16
+  literals: walk/idle offsets + easing constants). M1 moved them to `config/anim.ts`
+  (`WALK`/`IDLE_BREATH`/`EASE`), emptied `CORE_GRANDFATHERED`, and removed the `anim.ts` baseline
+  entry — so **all of `core/` is now held to the zero-literal gate**.
 
 - **AI reaction chances now sourced from `AI_TIERS.normal`** (`config/ai.ts`). The previous
   `AIController` used `reactBlock 0.22 / reactDodge 0.16`; the Normal tier is `0.30 / 0.15`.
   Both are INFERRED (freely tunable, no contract), so this is a seed change, not a contract
   divergence — recorded for traceability.
+
+## M1 — slash vertical slice decisions (2026-06-30)
+
+- **Jump is the drawn line, translated to the samurai.** Spec §D.1: a jump "begins at the line's
+  start point, ends at its endpoint." `DuelScene.doJump` arcs the player from `stroke.start.x` to
+  `stroke.end.x` (y pinned to the ground, fixed `JUMP_APEX`), matching the spec's instruction to
+  "start the line at the samurai for a clean jump." Verified live (player goes airborne and lands at
+  the line's end-x). `core/trajectory.jumpArcPoint` is the pure, unit-tested arc.
+
+- **Multi-foe (Tell 5) is demonstrated via `?foes=N`.** The default duel stays 1-v-1 (the AI ronin).
+  `?foes=N` (clamped to `MULTI_FOE_MAX`) adds static sparring dummies beside the ronin so one
+  horizontal stroke crosses several foes; `doSlash` loops all foes through `resolveSlash`. Verified:
+  one drag took two foes 100→{85,76}, killing neither (HP-based, not instakill). This keeps the duel
+  feel intact while making the engine fact directly observable.
+
+- **Directional blood uses an EmitterOp reload, not the `particleAngle` setter (Phaser 3.90).**
+  Assigning `emitter.particleAngle = {min,max}` does NOT re-aim the cone in 3.90 — its setter calls
+  `EmitterOp.onChange`, which only mutates `current` (to `NaN` for an object) and never reassigns
+  `start`/`end`. `Gore.spray` instead calls `ops.angle.loadConfig({angle:{min,max}})` so
+  `randomRangedValueEmit` reads the new range. Found by the M1 adversarial review (my first visual
+  pass was a false positive — the test cut happened to be rightward, matching the frozen default).
+  Verified deterministically (op center tracks the cut: right→0°, left→180°, up→270°, down→90°).
+
+- **Blade-trail colored edge = chi-blue (`COL.bladeChi`), not steel-grey.** Makes the two layers
+  read as distinct (white core + colored edge, Tell 2) and matches the survey note that the
+  reference trail "reads as a blue swept ribbon" (`CALIBRATION.md` row 4).
+
+- **`DrawnStroke` hardened against overflow-scale input.** `resample` now bails to the two endpoints
+  when `step` is non-finite, and `buildDrawnStroke` clamps a non-finite `length` to 0, so a ±1e308
+  stroke can no longer NaN-out the live hit-polyline. Found by the M1 adversarial review (the
+  original overflow chaos test only checked `dir`/`verb`); the test now asserts the full
+  finite-points/finite-length invariant, and the guard is proven by reverting it (test goes red).
 
 ## Deferred to later milestones (seeded now, built later)
 

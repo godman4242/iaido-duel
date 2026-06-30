@@ -44,6 +44,28 @@ describe('resolveSlash', () => {
     expect(r.hits).toEqual([]);
     expect(r.totalDamage).toBe(0);
   });
+  it('one stroke crosses TWO foes: damages BOTH, instakills NEITHER at full HP (Tell 5)', () => {
+    // each foe = a vertical torso capsule; one long horizontal sweep crosses both
+    const torsoAt = (x: number): Limb => ({
+      id: 'torso',
+      capsule: { a: { x, y: -20 }, b: { x, y: 20 }, r: 14 },
+      severThreshold: 40, // wider than the ~2r crossing, so a clean sweep does NOT sever
+    });
+    const path = [
+      { x: -50, y: 0 },
+      { x: 350, y: 0 },
+    ];
+    const slashOrigin = { x: -50, y: 0 };
+    const FULL_HP = 60;
+    const a = resolveSlash({ path, origin: slashOrigin, reach: 500, dmgMult: 1, crit: false, counter: 1 }, [torsoAt(60)], 10, 1);
+    const b = resolveSlash({ path, origin: slashOrigin, reach: 500, dmgMult: 1, crit: false, counter: 1 }, [torsoAt(260)], 10, 1);
+    expect(a.hits.length).toBeGreaterThan(0);
+    expect(b.hits.length).toBeGreaterThan(0);
+    expect(a.totalDamage).toBeGreaterThan(0);
+    expect(b.totalDamage).toBeGreaterThan(0);
+    expect(a.totalDamage).toBeLessThan(FULL_HP); // HP-based, not one-hit-kill
+    expect(b.totalDamage).toBeLessThan(FULL_HP);
+  });
   it('crit + counter + defenseTaken multiply into damage', () => {
     const path = [
       { x: 50, y: -5 },

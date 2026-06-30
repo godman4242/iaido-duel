@@ -1,11 +1,24 @@
 import Phaser from 'phaser';
 import { Pt } from '../../core/vec';
+import { bloodConeDeg } from '../../core/trajectory';
 import { COL } from '../../palette';
+import {
+  BLOOD_SPREAD_DEG,
+  BLOOD_SPEED_MIN,
+  BLOOD_SPEED_MAX,
+  BLOOD_LIFESPAN_MS,
+  BLOOD_GRAVITY_Y,
+  BLOOD_SCALE_START,
+} from '../../config/combat';
 
 /** Blood spray + sever decals. Crimson against the green, in the series' style. */
+/** The angle EmitterOp's reloadable range — the public type doesn't surface `ops`, so we narrow it. */
+type RangeOp = { loadConfig: (config: object) => void };
+
 export class Gore {
   static reduced = false;
   private emitter: Phaser.GameObjects.Particles.ParticleEmitter;
+  private angleOp: RangeOp;
   private decals: Phaser.GameObjects.Graphics;
 
   constructor(private scene: Phaser.Scene) {
@@ -19,20 +32,28 @@ export class Gore {
     this.decals = scene.add.graphics();
     this.decals.setDepth(5);
     this.emitter = scene.add.particles(0, 0, 'blood-dot', {
-      lifespan: 520,
-      speed: { min: 60, max: 240 },
-      angle: { min: 205, max: 335 }, // up-and-outward fan (0=right, 270=up); gravity arcs it down
-      scale: { start: 1.15, end: 0 },
-      gravityY: 760,
+      lifespan: BLOOD_LIFESPAN_MS,
+      speed: { min: BLOOD_SPEED_MIN, max: BLOOD_SPEED_MAX },
+      angle: { min: -BLOOD_SPREAD_DEG, max: BLOOD_SPREAD_DEG }, // default cone; re-aimed along the cut per spray
+      scale: { start: BLOOD_SCALE_START, end: 0 },
+      gravityY: BLOOD_GRAVITY_Y,
       quantity: 0,
       emitting: false,
       tint: [COL.blood, COL.bloodDark],
     });
     this.emitter.setDepth(40);
+    // Capture the angle op so spray() can re-aim it along the cut (see spray() for the 3.90 caveat).
+    this.angleOp = (this.emitter as unknown as { ops: { angle: RangeOp } }).ops.angle;
   }
 
-  /** Burst of blood at `at`. */
-  spray(at: Pt, amount: number): void {
+  /** Burst of blood at `at`, gouting ALONG the cut vector `dir` (spec §4.2, Tell 19). */
+  spray(at: Pt, amount: number, dir: Pt = { x: 0, y: -1 }): void {
+    const cone = bloodConeDeg(dir, BLOOD_SPREAD_DEG);
+    // Re-aim the angle EmitterOp at the cut. NOTE: `emitter.particleAngle = {min,max}` does NOT
+    // work in Phaser 3.90 — its setter calls EmitterOp.onChange, which only mutates `current` and
+    // never reassigns start/end, so the cone would stay frozen at the construction default. Reload
+    // the op's range so randomRangedValueEmit reads the new [min,max] (verified vs phaser@3.90 source).
+    this.angleOp.loadConfig({ angle: { min: cone.min, max: cone.max } });
     const count = Gore.reduced ? Math.ceil(amount / 2) : amount;
     this.emitter.emitParticleAt(at.x, at.y, count);
   }
