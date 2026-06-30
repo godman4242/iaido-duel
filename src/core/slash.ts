@@ -1,5 +1,6 @@
 import { Pt } from './vec';
 import { Capsule, polylineCapsuleOverlap, firstPointInCapsule } from './geometry';
+import { CRIT_MULT, SEVERED_DAMAGE_BONUS } from '../config/combat';
 
 export type Limb = { id: string; capsule: Capsule; severThreshold: number };
 
@@ -41,8 +42,8 @@ export function resolveSlash(
   let totalDamage = 0;
   if (hits.length) {
     const severed = hits.filter((h) => h.severed).length;
-    const base = atkPlusWeapon * input.dmgMult * (input.crit ? 1.3 : 1) * input.counter;
-    totalDamage = Math.round(base * defenderDamageTakenMult * (1 + 0.5 * severed));
+    const base = atkPlusWeapon * input.dmgMult * (input.crit ? CRIT_MULT : 1) * input.counter;
+    totalDamage = Math.round(base * defenderDamageTakenMult * (1 + SEVERED_DAMAGE_BONUS * severed));
   }
   return { hits, totalDamage };
 }

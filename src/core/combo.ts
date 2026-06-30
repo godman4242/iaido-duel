@@ -1,4 +1,7 @@
-export const COMBO_WINDOW_MS = 1200;
+// core/combo.ts — consecutive-hit counter. Window lives in config/timing.ts.
+import { COMBO_WINDOW_MS } from '../config/timing';
+
+export { COMBO_WINDOW_MS };
 
 /** Consecutive-hit counter: increments within COMBO_WINDOW_MS, otherwise restarts. */
 export class Combo {

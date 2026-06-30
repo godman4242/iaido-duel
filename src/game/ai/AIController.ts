@@ -1,9 +1,8 @@
 import Phaser from 'phaser';
 import { AIState, AIParams, nextAIState } from '../../core/ai';
 import { COL } from '../../palette';
+import { AI_TIERS, AI_APPROACH_RANGE, AI_STRIKE_RANGE, ENEMY_SPEED } from '../../config/ai';
 import { Fighter } from '../fighter/Fighter';
-
-const ENEMY_SPEED = 0.17; // px/ms
 
 export type AIControllerOpts = {
   self: Fighter;
@@ -27,10 +26,10 @@ export class AIController {
     private opts: AIControllerOpts,
   ) {
     this.params = {
-      approachRange: 620,
-      strikeRange: 132,
-      reactBlockChance: 0.22,
-      reactDodgeChance: 0.16,
+      approachRange: AI_APPROACH_RANGE,
+      strikeRange: AI_STRIKE_RANGE,
+      reactBlockChance: AI_TIERS.normal.reactBlockChance,
+      reactDodgeChance: AI_TIERS.normal.reactDodgeChance,
       ...opts.params,
     };
     this.tell = scene.add.graphics();

@@ -56,7 +56,7 @@ describe('resolveSlash', () => {
       1.25,
     );
     expect(r.hits[0].severed).toBe(false);
-    // base = 10*1.4*1.3*1.25 = 22.75 ; *1.25 def ; *(1+0) = 28.4375 -> 28
-    expect(r.totalDamage).toBe(28);
+    // base = 10*1.4*3(CONTRACT crit)*1.25 = 52.5 ; *1.25 def ; *(1+0) = 65.625 -> 66
+    expect(r.totalDamage).toBe(66);
   });
 });

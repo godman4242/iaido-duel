@@ -1,3 +1,6 @@
+// core/ai.ts — pure AI state machine. State durations come from config/ai.ts (Normal tier).
+import { AI_TIERS } from '../config/ai';
+
 export type AIState = 'idle' | 'approach' | 'telegraph' | 'attack' | 'recover' | 'block' | 'dodge';
 
 export type AISense = {
@@ -15,11 +18,11 @@ export type AIParams = {
   reactDodgeChance: number;
 };
 
-// Time (ms) spent in a state before it auto-advances.
-export const TELEGRAPH_MS = 520;
-export const ATTACK_MS = 180;
-export const RECOVER_MS = 620;
-export const REACT_MS = 320;
+// Time (ms) spent in a state before it auto-advances — sourced from the Normal AI tier.
+export const TELEGRAPH_MS = AI_TIERS.normal.telegraphMs;
+export const ATTACK_MS = AI_TIERS.normal.attackMs;
+export const RECOVER_MS = AI_TIERS.normal.recoverMs;
+export const REACT_MS = AI_TIERS.normal.reactMs;
 
 /** Pure transition: given the current state, time-in-state, what it senses, and its params. */
 export function nextAIState(state: AIState, t: number, s: AISense, p: AIParams): AIState {

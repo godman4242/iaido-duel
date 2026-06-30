@@ -1,4 +1,5 @@
 import { Pt } from './vec';
+import { HIT_SAMPLE_STEPS } from '../config/combat';
 
 export type Capsule = { a: Pt; b: Pt; r: number };
 
@@ -16,12 +17,12 @@ export function pointSegDist(p: Pt, a: Pt, b: Pt): number {
 }
 
 // Sampled length of segment p0->p1 lying within radius r of capsule core a-b.
-export function segCapsuleOverlap(p0: Pt, p1: Pt, c: Capsule, steps = 64): number {
+export function segCapsuleOverlap(p0: Pt, p1: Pt, c: Capsule, steps = HIT_SAMPLE_STEPS): number {
   const segLen = Math.hypot(p1.x - p0.x, p1.y - p0.y);
   if (segLen === 0) return 0;
   let inside = 0;
   for (let i = 0; i < steps; i++) {
-    const t = (i + 0.5) / steps;
+    const t = (i * 2 + 1) / (steps * 2); // sample at cell centers, equivalent to (i + 0.5)/steps
     const x = p0.x + (p1.x - p0.x) * t;
     const y = p0.y + (p1.y - p0.y) * t;
     if (pointSegDist({ x, y }, c.a, c.b) <= c.r) inside++;

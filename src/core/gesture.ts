@@ -1,9 +1,10 @@
+// core/gesture.ts — classify a drawn stroke into a verb. Threshold lives in config/combat.ts.
 import { Pt } from './vec';
+import { LAUNCH_DY } from '../config/combat';
+
+export { LAUNCH_DY };
 
 export type Gesture = 'slash' | 'jump' | 'launch' | 'stab';
-
-// A vertical-up stroke this large (or larger) is a launch flick, not a jump.
-export const LAUNCH_DY = 160;
 
 export function classifyGesture(path: Pt[]): Gesture {
   if (path.length < 2) return 'slash';
