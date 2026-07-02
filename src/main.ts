@@ -6,7 +6,7 @@ import { PrologueScene } from './game/scenes/PrologueScene';
 import { TownScene } from './game/scenes/TownScene';
 import { DuelScene } from './game/scenes/DuelScene';
 
-new Phaser.Game({
+const game = new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'game',
   backgroundColor: '#0d0d0d',
@@ -24,6 +24,8 @@ new Phaser.Game({
 
 // Dev-only fidelity gate: ?compare=<still> pins a reference frame beside the game.
 if (DEV) {
+  // Handle for automated verification (hidden-tab runs drive game.loop.step with virtual time).
+  (window as unknown as { __game?: Phaser.Game }).__game = game;
   const params = new URLSearchParams(location.search);
   if (params.has('compare')) {
     void import('./dev/CompareView').then((m) =>

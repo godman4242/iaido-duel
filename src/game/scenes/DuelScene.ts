@@ -12,9 +12,13 @@ import { resolveSlash, SlashInput, SlashResult } from '../../core/slash';
 import { DrawnStroke } from '../../core/DrawnStroke';
 import { jumpArcPoint } from '../../core/trajectory';
 import { Gore } from '../vfx/Gore';
+import { lootPop } from '../vfx/LootPop';
+import { FinisherFlash } from '../vfx/FinisherFlash';
 import { Hud } from '../ui/Hud';
 import { AIController } from '../ai/AIController';
-import { Forest } from '../background/Forest';
+import { Biome, createBiome } from '../background/createBiome';
+import { Letterbox } from '../chrome/Letterbox';
+import { SCENE_BIOMES, DUEL_SCENE } from '../../config/scenes-extra';
 import { playSlash, playImpact, playStanceSwitch, playGrunt, resumeAudio, toggleMuted } from '../audio/sfx';
 import { Combo } from '../../core/combo';
 import { SLASH_FRAMES, FIXED_DT_MS } from '../../config/timing';
@@ -58,7 +62,8 @@ export class DuelScene extends Phaser.Scene {
   private gore!: Gore;
   private hud!: Hud;
   private ai!: AIController;
-  private forest!: Forest;
+  private biome!: Biome;
+  private travelIn = false;
   private playerFocus = new Focus();
   private combo = new Combo();
   private keys!: Record<'left' | 'right', Phaser.Input.Keyboard.Key>;
@@ -72,9 +77,16 @@ export class DuelScene extends Phaser.Scene {
     super('Duel');
   }
 
+  /** `travelIn` = arrived via a letterboxed travel pan (Town); R-restart resets it. */
+  init(data?: { travelIn?: boolean }) {
+    this.travelIn = !!data?.travelIn;
+  }
+
   create() {
-    this.cameras.main.setBackgroundColor(0x4ba1a4);
-    this.forest = new Forest(this, GROUND_Y);
+    // §2 biome kit (config switch in SCENE_BIOMES) — parallax layers, top vignette,
+    // foreground occluders in front of the fighters (tells #2/#3).
+    this.cameras.main.setBackgroundColor(DUEL_SCENE.bgColor);
+    this.biome = createBiome(this, SCENE_BIOMES.duel, GROUND_Y);
 
     this.player = new Fighter(this, GAME_W * 0.43, GROUND_Y, 1, { stance: 'balanced' });
     this.enemy = new Fighter(this, GAME_W * 0.57, GROUND_Y, -1, {
@@ -96,9 +108,19 @@ export class DuelScene extends Phaser.Scene {
       this.foes.push(dummy);
     }
 
-    this.trail = new BladeTrail(this);
-    this.gore = new Gore(this);
+    this.trail = new BladeTrail(this, DUEL_SCENE.arcVariant);
+    this.gore = new Gore(this, GROUND_Y); // ground-bound: pools + spatter sit on the arena floor
     this.hud = new Hud(this, { player: this.player, enemy: this.enemy, focus: this.playerFocus });
+
+    // Arriving from Town's travel pan: open under the black bars, then release them (tell #9).
+    if (this.travelIn) {
+      const bars = new Letterbox(this);
+      bars.snapIn();
+      bars.slideOut();
+      // consume the flag IN the stored scene data too — scene.restart() reuses the old data,
+      // so without this an R-restart would replay the travel pan every time
+      (this.sys.settings.data as { travelIn?: boolean }).travelIn = false;
+    }
     // reset Focus on restart (scene instance is reused)
     this.playerFocus.value = 0;
     this.playerFocus.gain(50); // start with enough Focus to switch once; builds from hits (tunable)
@@ -234,14 +256,31 @@ export class DuelScene extends Phaser.Scene {
     }
   }
 
-  /** Killing-blow beat: the loser collapses, then a fast red wash + running silhouette (matches the source). */
+  /** Killing-blow sequence (§4 + tells #5a/#8): the loser collapses while a dark pool
+   *  spreads under the corpse and loot tumbles out; after a brief on-field glimpse the
+   *  finisher flash (black silhouettes over flat red, slow-mo) fires, then the §7 KillBeat. */
   private onKill(playerWon: boolean) {
     if (this.finishing) return;
     this.finishing = true;
     this.over = true;
-    (playerWon ? this.enemy : this.player).die();
-    // brief on-field collapse glimpse, then the red wash takes over
-    this.time.delayedCall(200, () => new KillBeat(this).play(playerWon));
+    const loser = playerWon ? this.enemy : this.player;
+    loser.die();
+    this.gore.pool({ x: loser.x, y: 0 }); // persists — the pool marks the corpse (tell #8)
+    if (playerWon) {
+      lootPop(this, { x: loser.x, y: loser.y - DUEL_SCENE.lootChestOffsetY }, GROUND_Y);
+    }
+    this.time.delayedCall(DUEL_SCENE.collapseGlimpseMs, () => {
+      const sils = [this.player, ...this.foes].map((f) => ({
+        x: f.x,
+        y: f.y,
+        facing: f.facing,
+        pose: f.pose,
+      }));
+      new FinisherFlash(this).play(sils, {
+        groundY: GROUND_Y,
+        onDone: () => new KillBeat(this).play(playerWon),
+      });
+    });
   }
 
   /** Direction = verb (spec §D.1): horizontal→slash, up→jump, big-up→launch, down→stab. */
@@ -385,11 +424,13 @@ export class DuelScene extends Phaser.Scene {
       this.player.facing = this.enemy.x >= this.player.x ? 1 : -1;
       this.player.scaleX = this.player.facing;
 
-      this.forest.update(this.player.x);
       this.ai.update(delta);
       enemyMoving = this.ai.stateName() === 'approach';
       this.trail.update(delta);
     }
+
+    // parallax + secondary motion keep breathing through the kill sequence
+    this.biome.update(delta, this.player.x);
 
     // animate every fighter each frame (incl. the death fall while finishing); dummies idle in place
     this.player.update(delta, playerMoving);

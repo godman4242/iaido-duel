@@ -14,6 +14,11 @@ waiting on footage.
 
 > Status below is **survey-grade INFERRED** (read from compressed 512px frames, ~1 frame/70s).
 > None is frame-stepped yet → none is `CONFIRMED`. The §F `(measure)` tells need CONFIRMED values.
+>
+> **2026-07-02 survey v2:** both longplays re-surveyed at 80 frames each (160 total). The full
+> distillation — biome layer stacks, HUD geometry, panel chrome, FX behavior, typography roles,
+> the "ten loudest tells" — now lives in **`docs/ART_DIRECTION.md`**; that doc is the working
+> spec for the visual overhaul. Rows below stay as the measured-value ledger.
 
 | # | Calibration item | Target tolerance | Seed (config) | Survey observation | Status |
 |---|---|---|---|---|---|

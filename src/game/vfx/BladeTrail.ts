@@ -1,29 +1,40 @@
 import Phaser from 'phaser';
 import { Pt } from '../../core/vec';
 import { buildDrawnStroke } from '../../core/DrawnStroke';
-import { COL } from '../../palette';
-import { BLADE_CORE_WIDTH, BLADE_EDGE_WIDTH, BLADE_FADE_MS, BLADE_MIN_TAPER } from '../../config/combat';
+import { SLASH_ARC } from '../../config/fx';
+import { ARC_VARIANTS, ArcVariant, FX_DEPTH } from '../../config/fx-extra';
 
 /**
- * The blade trail (spec §D.1, Tells 1 & 2): the raw hand-path is resampled + smoothed into a clean
- * swept curve (NEVER the jittery raw polyline — that reads as MS-Paint), then rendered as a
- * TWO-LAYER TAPERED RIBBON — a wide blade-colored edge under a bright white core, both pinched to
- * zero at the tips and widest mid-stroke, with the newest point as the leading tip the blade chases.
+ * The slash arc (ART_DIRECTION §4, tell #4): a FAT tapered crescent along the drawn stroke —
+ * a broad weapon-colored body under a lighter core, both pinched at the tips and widest
+ * mid-stroke. The raw hand-path is resampled + smoothed first (never the jittery polyline).
+ * Weapon variants: steel (default) / blue katana / red sabre, selectable via `setVariant`
+ * or the constructor param. On release the arc HANGS at full alpha ~200ms, then fades.
  */
 export class BladeTrail {
   private g: Phaser.GameObjects.Graphics;
   private raw: Pt[] = [];
   private alpha = 0;
+  private hangLeft = 0;
   private fading = false;
 
-  constructor(scene: Phaser.Scene) {
+  constructor(
+    scene: Phaser.Scene,
+    private variant: ArcVariant = 'steel',
+  ) {
     this.g = scene.add.graphics();
-    this.g.setDepth(50);
+    this.g.setDepth(FX_DEPTH.bladeTrail);
+  }
+
+  /** Swap the weapon color (steel default; blue katana / red sabre per §4). */
+  setVariant(v: ArcVariant): void {
+    this.variant = v;
   }
 
   begin(): void {
     this.raw = [];
     this.alpha = 1;
+    this.hangLeft = 0;
     this.fading = false;
   }
 
@@ -32,14 +43,19 @@ export class BladeTrail {
     this.redraw();
   }
 
-  /** Stop drawing; the streak now fades out as an afterimage arc. */
+  /** Stop drawing; the crescent hangs at full alpha for SLASH_ARC.hangMs, then fades. */
   end(): void {
     this.fading = true;
+    this.hangLeft = SLASH_ARC.hangMs;
   }
 
   update(deltaMs: number): void {
     if (!this.fading || this.alpha <= 0) return;
-    this.alpha = Math.max(0, this.alpha - deltaMs / BLADE_FADE_MS);
+    if (this.hangLeft > 0) {
+      this.hangLeft -= deltaMs; // §4: the arc hangs ~200ms before fading
+      return;
+    }
+    this.alpha = Math.max(0, this.alpha - deltaMs / SLASH_ARC.fadeMs);
     this.redraw();
   }
 
@@ -60,14 +76,18 @@ export class BladeTrail {
     return out;
   }
 
-  /** Fill a tapered ribbon: half-width = maxHalf · taper(t), taper(t)=sin(πt) pinched at both tips. */
+  /**
+   * Fill a tapered ribbon: half-width = maxHalf · taper(t). The taper is sin(πt) raised to
+   * 1/taperPow — an exponent < 1 keeps the body FAT through the middle (the §4 crescent)
+   * and pinches it sharply at both tips. `floor` keeps the core visible at the tips.
+   */
   private ribbon(pts: Pt[], norms: Pt[], maxHalf: number, floor: number, color: number, alpha: number): void {
     const n = pts.length;
     const left: Phaser.Math.Vector2[] = [];
     const right: Phaser.Math.Vector2[] = [];
     for (let i = 0; i < n; i++) {
       const t = n === 1 ? 0 : i / (n - 1);
-      const taper = Math.max(floor, Math.sin(Math.PI * t));
+      const taper = Math.max(floor, Math.sin(Math.PI * t) ** (1 / SLASH_ARC.taperPow));
       const hw = maxHalf * taper;
       const nx = norms[i].x * hw;
       const ny = norms[i].y * hw;
@@ -85,9 +105,10 @@ export class BladeTrail {
     const pts = buildDrawnStroke(this.raw).points;
     if (pts.length < 2) return;
     const norms = this.normals(pts);
-    // colored edge (under) — chi-blue, pinched to zero at both tips (reference reads as a blue ribbon)
-    this.ribbon(pts, norms, BLADE_EDGE_WIDTH, 0, COL.bladeChi, this.alpha);
-    // bright white core (over) — a continuous thread, kept just visible at the tips by the taper floor
-    this.ribbon(pts, norms, BLADE_CORE_WIDTH, BLADE_MIN_TAPER, COL.bladeEdge, this.alpha);
+    const arc = ARC_VARIANTS[this.variant];
+    // weapon-colored body (under) — broad, pinched to zero at both tips (§4 fat crescent)
+    this.ribbon(pts, norms, SLASH_ARC.bodyHalfWidth, 0, arc.body, this.alpha);
+    // lighter core (over) — a continuous thread, kept just visible at the tips by the floor
+    this.ribbon(pts, norms, SLASH_ARC.coreHalfWidth, SLASH_ARC.minTaper, arc.core, this.alpha);
   }
 }

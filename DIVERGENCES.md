@@ -105,6 +105,29 @@ is logged here.
 - **`OpponentIntent.stroke` is `{ path: Pt[] }`**, not a named `DrawnStroke` type. The resampled +
   smoothed `DrawnStroke` (two-layer tapered ribbon source-of-truth) is introduced in **M1**.
 
+## Distribution & IP posture (2026-07-02 — PUBLIC release is now the goal)
+
+Kheshav's goal update: release the game publicly (free) so the original community can replay
+it. This supersedes the 2026-06-29 "private repo" mitigation, which was the load-bearing
+justification for mirroring names/plot. Posture for anything that ships publicly:
+
+- **Ship-safe (match exactly):** mechanics, numbers, timing, controls, screen flow, HUD layout,
+  palette mood, FX behavior, genre/style family ("flat-vector samurai") — facts and ideas, not
+  protectable expression. This is what the §F tells overwhelmingly measure.
+- **Not ship-safe publicly (must be original):** the source's title/wordmark (trademark), its
+  cast/clan-name roster + plot sequence taken as a whole (protectable characters/plot), traced
+  or perceptually-1:1 replica artwork, and verbatim prose (already banned). Free/non-commercial
+  release reduces damages, **not** liability — it is not a shield.
+- **Public build config:** `TITLE_WORDMARK` ships as **IAIDO DUEL**; campaign data ships an
+  **original cast/story in the same register** (rural intrigue, ailing lord, old-guard vanguard,
+  haiku title cards — same *form*, our names/words). Tell 35 regrades for the public build to
+  "internally consistent original lore"; Tells 33–34 (structure/format) unchanged.
+- **Two-track content:** campaign content is data-driven and swappable by design (2026-06-29
+  decision), so the private faithful variant remains possible without forking the engine.
+- **The one path to a true 1:1 public revival:** permission from the rights holder
+  (LutGames / Luther Chan). Worth an email before M4 content lands — dead-Flash devs often
+  bless fan revivals. (For pure preservation, the original also survives via Flashpoint.)
+
 ## DESIGN-FROM-LORE systems (graded by lore-faithfulness, exempt from frame-exact)
 
 - **War Room rival-clan strategic AI** (spec §A.4) — servers are dead; logic was server-side.
