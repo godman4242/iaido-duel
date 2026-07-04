@@ -471,10 +471,13 @@ Run: `npm run dev`, open http://localhost:5173/
 Expected: a brown TOWN screen reading **KASUTA** and `Lv 1 · 0 coin · engine foundation OK`.
 Then: reload → still shows the town (save persisted). Open http://localhost:5173/?scene=duel → the **duel still runs** unchanged. (Mark this step **unverified until actually observed**.)
 
-- [ ] **Step 6: Checkpoint** — stage, do NOT commit yet.
+- [ ] **Step 6: Commit (local only — never push)**
 
 ```bash
 git add src/game/scenes/BootScene.ts src/game/scenes/TownScene.ts src/main.ts
+git commit -m "feat(scenes): Boot + Town stub + scene wiring (duel preserved via ?scene=duel)
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```
 
 ---
@@ -596,12 +599,14 @@ Expected: PASS — clean (no unused-import errors from BootScene).
 Run: `npm run dev`, open http://localhost:5173/
 Expected: boots to the **TITLE** — three epigraph lines (placeholder text until transcribed) over **NEW GAME** / **CONTINUE**. With no save, CONTINUE is dimmed. Click **NEW GAME** → the KASUTA town screen. Reload → CONTINUE is now lit → click it → returns to town. http://localhost:5173/?scene=duel still runs the duel. (Mark **unverified until observed**; transcribe the epigraph words at this gate against the video.)
 
-- [ ] **Step 6: Final checkpoint for Plan 1** — run the full suite + build, then stage. Hold the commit.
+- [ ] **Step 6: Commit (local only — never push)** — run the full suite + build first.
 
 ```bash
 npm test && npm run build
 git add src/game/scenes/TitleScene.ts src/game/scenes/BootScene.ts src/main.ts
-# Plan 1 complete. Commit the whole foundation only after Kheshav's go-ahead + private repo.
+git commit -m "feat(scenes): Title (forest + logo + New Game/Continue); route Boot to Title
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```
 
 ---
