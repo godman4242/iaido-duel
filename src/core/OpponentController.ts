@@ -42,7 +42,11 @@ export interface OpponentIntent {
   smokeBomb?: boolean; // teleport-dodge (the AI's react-dodge plays this same intent)
   move?: -1 | 0 | 1; // continuous walk direction, applied every tick at the side's move speed
   shunpoHold?: boolean; // held-state each tick; sim edge-detects start/end (player slow-mo)
-  throwProjectile?: boolean; // spawns a kunai toward the opponent (design-for-test — DIVERGENCES)
+  throwProjectile?: boolean; // spawns a kunai toward the opponent (AI Normal+ tiers throw in range — config/ai)
+  /** Held while the player is mid-draw (stroke started, not yet released). The AI's
+   *  react-block/dodge senses THIS (M1 parity: reactions armed at stroke START), because a
+   *  zero-windup strike resolves the tick it is queued — there is no windup left to read. */
+  strokeArmed?: boolean;
   /** Held block pose (AI react-block). Contract extension: `blocking` is sim-owned state but the
    *  DECISION is the controller's, and block has no other channel through the seam. */
   block?: boolean;

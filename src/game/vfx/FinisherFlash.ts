@@ -63,14 +63,17 @@ export class FinisherFlash {
       layer.add(g);
     }
 
-    // slow-mo beat (§9): scale the scene clock + tweens; restore on release
+    // slow-mo beat (§9 / blueprint §3.11): the clock RAMPS to slowMoScale over slowMoRampMs
+    // (not an instant set), holds, and restores on release. The ramp runs on the same raw
+    // update deltas as the flash lifecycle, so it is immune to the scaling it applies.
     const applySlowMo = opts?.slowMo ?? true;
     const prevTimeScale = s.time.timeScale;
     const prevTweenScale = s.tweens.timeScale;
-    if (applySlowMo) {
-      s.time.timeScale = FINISHER_FLASH.slowMoScale;
-      s.tweens.timeScale = FINISHER_FLASH.slowMoScale;
-    }
+    const rampMs = FINISHER_FLASH.slowMoRampMs;
+    const setScales = (v: number): void => {
+      s.time.timeScale = v;
+      s.tweens.timeScale = v;
+    };
 
     // lifecycle on RAW update deltas — unaffected by the slow-mo it applies
     const snap = FINISHER_FLASH.snapInMs;
@@ -80,6 +83,11 @@ export class FinisherFlash {
     let done = false;
     const onUpdate = (_time: number, deltaMs: number): void => {
       t += deltaMs;
+      if (applySlowMo) {
+        // §3.11 measure: an intermediate timeScale exists mid-ramp, then the factor holds
+        const k = rampMs > 0 ? Math.min(1, t / rampMs) : 1;
+        setScales(prevTimeScale + (FINISHER_FLASH.slowMoScale - prevTimeScale) * k);
+      }
       if (t < snap) {
         layer.setAlpha(t / snap); // snaps in near-instantly (§4)
       } else if (t < snap + hold) {

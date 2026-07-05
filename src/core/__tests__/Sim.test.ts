@@ -3,6 +3,7 @@ import { Sim, type SimConfig, type SimEvent, type FighterSeed } from '../Sim';
 import { ScriptedController } from '../ScriptedController';
 import { AISeamController } from '../AISeamController';
 import type { OpponentIntent } from '../OpponentController';
+import type { Limb } from '../slash';
 import { criticalDrainPerSwing } from '../critical';
 import { stepProjectile, projectileOverlaps, projectileOffArena } from '../projectile';
 import {
@@ -43,9 +44,9 @@ import type { StanceId } from '../../config/stances';
 // ── shared fixtures ──────────────────────────────────────────────────────────────────────────
 const DT = FIXED_DT_MS;
 const TORSO_Y = SIM_GROUND_Y - STRIKE_TORSO_OFFSET;
-/** Ticks a countdown of `ms` needs to reach zero (tickDown ceil semantics). */
-const ticksFor = (ms: number) => Math.ceil(ms / DT - 1e-9);
-const WINDUP_TICKS = ticksFor(PLAYER_WINDUP_MS); // 360ms → 22
+/** Ticks a countdown of `ms` needs to reach zero (tickDown ceil semantics; never −0). */
+const ticksFor = (ms: number) => Math.max(0, Math.ceil(ms / DT - 1e-9));
+const WINDUP_TICKS = ticksFor(PLAYER_WINDUP_MS); // 0 — the drawn slash resolves the tick it lands
 const BUSY_TICKS_BAL =
   SLASH_FRAMES.balanced.windup + SLASH_FRAMES.balanced.active + SLASH_FRAMES.balanced.recovery; // 21
 
@@ -433,9 +434,11 @@ describe('Chi Punch + useSkill routing', () => {
     expect(ofType(evsB, 'smokeBombUsed')).toHaveLength(1);
 
     const simC = new Sim(cfg(), new ScriptedController([whiff]));
-    run(simC, 1, { 0: { useSkill: 3 } });
-    expect(simC.player.pendingStrike?.verb).toBe('stab');
-    run(simC, WINDUP_TICKS + 1);
+    const evsC = run(simC, 1, { 0: { useSkill: 3 } });
+    // zero windup: the stab is queued AND resolved on the same tick (slashStarted carries the verb)
+    const started = ofType(evsC, 'slashStarted').filter((e) => e.ev.actor === 'player');
+    expect(started).toHaveLength(1);
+    expect(started[0].ev.verb).toBe('stab');
     expect(simC.foes[0].hp).toBe(100 - Math.round(10 * 1.2 * 1.45)); // stab mult
     expect(simC.player.busyMs).toBeGreaterThan(0);
     expect(simC.player.busyMs).toBeLessThanOrEqual(SPECIAL_MS);
@@ -603,16 +606,18 @@ describe('Shunpo — held slow-mo draining the power meter', () => {
 // ── §3.11 kill-beat trigger (Tell 15) ────────────────────────────────────────────────────────
 describe('killBeat — latched exactly once, deterministic tie rule', () => {
   it('CHAOS: simultaneous fatal blows on one tick → ONE killBeat; opponent-first rule wins', () => {
-    // foe strike queued t4 lands t4+32=36; player strike queued t14 lands t14+22=36 — same tick.
+    // foe strike queued t4 lands t4+32=36; the player's ZERO-windup strike queued t36 would
+    // land the same tick 36 (step 5b) — the opponent's resolves first (step 3) and wins.
+    // A tick-0 whiff clears the player's spawn invuln so the foe's blow can actually land.
     const oppTicks = ticksFor(AI_TIERS.normal.telegraphMs); // 32
-    const playerQueueTick = 4 + oppTicks - WINDUP_TICKS; // = 14 → both land tick 36
+    const playerQueueTick = 4 + oppTicks - WINDUP_TICKS; // = 36 → both would land tick 36
     const script: OpponentIntent[] = [];
     script[4] = slash;
     const sim = new Sim(
       cfg({ player: seed({ hp: 5 }), foes: [seed({ x: 450, hp: 5 })] }),
       new ScriptedController(script),
     );
-    const evs = run(sim, 60, { [playerQueueTick]: slash });
+    const evs = run(sim, 60, { 0: whiff, [playerQueueTick]: slash });
     const kills = ofType(evs, 'killBeat');
     expect(kills).toHaveLength(1); // never double-fires
     // documented deterministic resolution order: opponent resolves first, player dies
@@ -752,8 +757,10 @@ describe('AI telegraph ≥ AI_TIERS[tier].telegraphMs before landing', () => {
       tFixed: 0,
     });
     ai.decide(view({}), DT); // idle → approach (distance ≤ approachRange)
+    // any positive windup reads as a telegraphed strike (PLAYER_WINDUP_MS is 0 by config,
+    // so the fixture uses the tier telegraph duration as a representative held windup)
     const react = ai.decide(
-      view({ windupMs: PLAYER_WINDUP_MS, pendingStrike: { verb: 'stab' } }),
+      view({ windupMs: AI_TIERS.normal.telegraphMs, pendingStrike: { verb: 'stab' } }),
       DT,
     );
     expect(react.smokeBomb).toBe(true); // the react-dodge IS the smoke-bomb intent
@@ -848,18 +855,25 @@ describe('movement + airborne arcs are sim-owned', () => {
 
 // ── verb routing parity (port-contract risk: two classifiers drifting) ───────────────────────
 describe('one classifier decision — the verb travels in the intent', () => {
+  // With PLAYER_WINDUP_MS = 0 the strike is queued AND resolved on the same tick, so the
+  // routed verb is observed on the slashStarted event it emits (not on pendingStrike).
+  const startedVerb = (evs: Tagged[]): string | undefined =>
+    ofType(evs, 'slashStarted').find((e) => e.ev.actor === 'player')?.ev.verb;
+
   it('an explicit verb is trusted even when the path would classify differently', () => {
     const sim = new Sim(cfg(), new ScriptedController([]));
-    run(sim, 1, {
+    const evs = run(sim, 1, {
       0: { stroke: { path: [{ x: 260, y: TORSO_Y }, { x: 520, y: TORSO_Y }], verb: 'stab' } },
     });
-    expect(sim.player.pendingStrike?.verb).toBe('stab'); // horizontal path, verb wins
+    expect(startedVerb(evs)).toBe('stab'); // horizontal path, verb wins
   });
 
   it('a path-only stroke is classified; an unknown verb string falls back to classification', () => {
     const sim = new Sim(cfg(), new ScriptedController([]));
-    run(sim, 1, { 0: { stroke: { path: stab.stroke!.path, verb: 'teleport' as 'stab' } } });
-    expect(sim.player.pendingStrike?.verb).toBe('stab'); // down-stroke → stab via classifyGesture
+    const evs = run(sim, 1, {
+      0: { stroke: { path: stab.stroke!.path, verb: 'teleport' as 'stab' } },
+    });
+    expect(startedVerb(evs)).toBe('stab'); // down-stroke → stab via classifyGesture
   });
 });
 
@@ -954,5 +968,246 @@ describe('chaos battery — none may throw, hang, NaN, or double-fire', () => {
     const sim = new Sim(bad, new ScriptedController([]));
     expect(typeof sim.rng).toBe('function');
     expect(Number.isFinite(sim.rng())).toBe(true);
+  });
+});
+
+// ── M2 verification-pass regressions (adversarial-review findings) ───────────────────────────
+
+describe('REGRESSION (M1 feel): the drawn slash resolves the SAME tick the gesture lands', () => {
+  it('intent tick === slashStarted tick === hitLanded tick (PLAYER_WINDUP_MS = 0)', () => {
+    expect(PLAYER_WINDUP_MS).toBe(0); // fidelity contract — instant-on-gesture-end
+    const sim = new Sim(cfg(), new ScriptedController([whiff])); // foe clears own invuln t0
+    const evs = run(sim, 3, { 1: slash }); // queue on tick 1 (not 0 — proves no off-by-one)
+    const started = ofType(evs, 'slashStarted').filter((e) => e.ev.actor === 'player');
+    const landed = ofType(evs, 'hitLanded').filter((e) => e.ev.actor === 'player');
+    expect(started).toHaveLength(1);
+    expect(landed).toHaveLength(1);
+    expect(started[0].tick).toBe(1);
+    expect(landed[0].tick).toBe(1); // zero-tick latency: gesture end → blood
+  });
+
+  it('the AI reacts to the DRAW (held strokeArmed), not to a windup that no longer exists', () => {
+    // rng pinned below reactBlockChance: once the player is mid-draw, the approach-state AI
+    // must enter block (M1 reaction parity: playerWindupUntil armed at stroke START).
+    const ai = new AISeamController({ rng: () => 0.01, tier: 'normal' });
+    const sim = new Sim(cfg(), ai);
+    run(sim, 3); // idle → approach (distance 150 ≤ approachRange)
+    expect(ai.stateName()).toBe('approach');
+    run(sim, 6, {}, { strokeArmed: true }); // the player starts drawing
+    expect(ai.stateName()).toBe('block');
+    expect(sim.foes[0].blocking).toBe(true);
+  });
+});
+
+describe('blocked events carry WHY the damage nulled (Tell 28: parry ≠ invulnerability null)', () => {
+  it('striking a spawn-invulnerable foe → reason "invuln" (no armor-parry cue)', () => {
+    const sim = new Sim(cfg(), new ScriptedController([])); // foe never acts — invuln holds
+    const evs = run(sim, 2, { 0: slash });
+    const blocked = ofType(evs, 'blocked');
+    expect(blocked).toHaveLength(1);
+    expect(blocked[0].ev.reason).toBe('invuln');
+  });
+
+  it('a held block pose → reason "block" (the true armor-parry)', () => {
+    const script: OpponentIntent[] = [whiff]; // clears the foe's own spawn invuln
+    for (let i = 1; i < 40; i++) script[i] = { block: true };
+    const sim = new Sim(cfg(), new ScriptedController(script));
+    const evs = run(sim, 10, { 5: slash });
+    const blocked = ofType(evs, 'blocked');
+    expect(blocked).toHaveLength(1);
+    expect(blocked[0].ev.reason).toBe('block');
+  });
+
+  it('smoke i-frames → reason "iframes"', () => {
+    const script: OpponentIntent[] = [whiff];
+    script[2] = { smokeBomb: true }; // AI smoke telegraphs, then executes with i-frames
+    const sim = new Sim(cfg(), new ScriptedController(script));
+    const execTick = 2 + ticksFor(AI_TIERS.normal.telegraphMs);
+    // strike INTO the slide one tick after execution (any later and the teleport carries the
+    // foe beyond balanced reach — the whiff would mask the i-frame null this test measures)
+    const evs = run(sim, execTick + 6, { [execTick + 1]: slash });
+    const blocked = ofType(evs, 'blocked');
+    expect(blocked).toHaveLength(1);
+    expect(blocked[0].ev.reason).toBe('iframes');
+    expect(sim.foes[0].hp).toBe(100);
+  });
+});
+
+describe('§3.9 stance-flash — an AI stance switch telegraphs ≥ telegraphMs before it lands', () => {
+  it('telegraphStarted(stanceFlash) → stanceSwitched ≥ AI_TIERS[tier].telegraphMs', () => {
+    const sim = new Sim(cfg(), new ScriptedController([{ switchStance: 'light' }]));
+    const evs = run(sim, ticksFor(AI_TIERS.normal.telegraphMs) + 4);
+    const tel = ofType(evs, 'telegraphStarted').filter((e) => e.ev.kind === 'stanceFlash');
+    const sw = ofType(evs, 'stanceSwitched').filter((e) => e.ev.actor === 'opponent');
+    expect(tel).toHaveLength(1);
+    expect(tel[0].ev.durationMs).toBe(AI_TIERS.normal.telegraphMs);
+    expect(sw).toHaveLength(1);
+    // the blueprint measure, verbatim: telegraph-enter → land ≥ telegraphMs
+    expect((sw[0].tick - tel[0].tick) * DT).toBeGreaterThanOrEqual(AI_TIERS.normal.telegraphMs);
+    expect(sim.foes[0].stance).toBe('light');
+    expect(sim.foes[0].focus).toBe(FOCUS_START - FOCUS_SWITCH_COST); // charged when it lands
+  });
+
+  it('the switch does NOT apply before the telegraph expires (no instant flip)', () => {
+    const sim = new Sim(cfg(), new ScriptedController([{ switchStance: 'light' }]));
+    run(sim, ticksFor(AI_TIERS.normal.telegraphMs) - 1);
+    expect(sim.foes[0].stance).toBe('balanced'); // still holding the stance flash
+    expect(sim.foes[0].pendingStanceMs).toBeGreaterThan(0);
+  });
+
+  it('CHAOS: switch spam during a pending stance-flash cannot double-queue or double-charge', () => {
+    const sim = new Sim(
+      cfg(),
+      new ScriptedController(Array.from({ length: 80 }, () => ({ switchStance: 'light' as const }))),
+    );
+    const evs = run(sim, 80);
+    expect(ofType(evs, 'telegraphStarted').filter((e) => e.ev.kind === 'stanceFlash')).toHaveLength(1);
+    expect(ofType(evs, 'stanceSwitched').filter((e) => e.ev.actor === 'opponent')).toHaveLength(1);
+    expect(sim.foes[0].focus).toBe(FOCUS_START - FOCUS_SWITCH_COST); // charged exactly once
+  });
+
+  it('the PLAYER stance switch stays instant (Tell 8 responsiveness — no telegraph)', () => {
+    const sim = new Sim(cfg(), new ScriptedController([]));
+    const evs = run(sim, 1, { 0: { switchStance: 'light' } });
+    expect(ofType(evs, 'stanceSwitched')).toHaveLength(1); // lands on the intent tick
+    expect(ofType(evs, 'telegraphStarted')).toHaveLength(0);
+    expect(sim.player.stance).toBe('light');
+  });
+});
+
+describe('event payloads carry the victim (targetIndex) — the scene never re-derives it', () => {
+  it('chiPunchLanded carries targetIndex 0 even when the punch is the killing blow (?foes≥2)', () => {
+    const sim = new Sim(
+      cfg({ foes: [seed({ x: 450, hp: CHI_PUNCH_DMG_L1 }), seed({ x: 560 })] }),
+      new ScriptedController([]),
+    );
+    run(sim, ticksFor(SPAWN_INVULN_MS) + 1); // wait out spawn invuln (the foes never act)
+    const evs = run(sim, 2, { 0: { useSkill: 1 } });
+    const landed = ofType(evs, 'chiPunchLanded');
+    expect(landed).toHaveLength(1);
+    expect(landed[0].ev.targetIndex).toBe(0); // the ronin it killed, NOT the surviving dummy
+    expect(sim.foes[0].hp).toBe(0);
+    expect(sim.foes[1].hp).toBe(100); // dummy untouched — no wrong-puppet flinch source
+    expect(sim.winner).toBe('player');
+  });
+
+  it('projectileHit carries the foe index a player kunai actually struck (a dummy ≠ foes[0])', () => {
+    const sim = new Sim(
+      cfg({ player: seed({ x: 300 }), foes: [seed({ x: 900 }), seed({ x: 450 })] }),
+      new ScriptedController([]),
+    );
+    run(sim, ticksFor(SPAWN_INVULN_MS) + 1); // the dummies keep invuln until timeout
+    const evs = run(sim, 40, { 0: { throwProjectile: true } });
+    const hit = ofType(evs, 'projectileHit');
+    expect(hit).toHaveLength(1);
+    expect(hit[0].ev).toMatchObject({ actor: 'player', targetIndex: 1, dmg: PROJECTILE_DMG });
+    expect(sim.foes[1].hp).toBe(100 - PROJECTILE_DMG); // the dummy it flew into
+    expect(sim.foes[0].hp).toBe(100); // the far ronin untouched
+  });
+
+  it('an opponent kunai carries targetIndex −1 (the player)', () => {
+    const sim = new Sim(cfg(), new ScriptedController([{ throwProjectile: true }]));
+    const evs = run(sim, 40, { 0: whiff });
+    const hit = ofType(evs, 'projectileHit');
+    expect(hit).toHaveLength(1);
+    expect(hit[0].ev.targetIndex).toBe(-1);
+  });
+});
+
+describe('CHAOS: hostile limbsFor (shape-invalid injected limbs) never crashes the tick', () => {
+  it("the finding's exact malformed limb (missing `capsule`) degrades instead of throwing", () => {
+    const hostile = [
+      { name: 'torso', a: { x: 450, y: TORSO_Y - 40 }, b: { x: 450, y: TORSO_Y + 40 }, r: Number.NaN },
+    ];
+    const sim = new Sim(
+      cfg({ limbsFor: () => hostile as unknown as Limb[] }),
+      new ScriptedController([whiff]),
+    );
+    let evs: Tagged[] = [];
+    expect(() => {
+      evs = run(sim, 3, { 0: slash });
+    }).not.toThrow();
+    // all-invalid limbs fall back to the default body capsule — the duel goes on
+    expect(ofType(evs, 'hitLanded').length + ofType(evs, 'whiffed').length).toBeGreaterThan(0);
+    for (const [k, v] of Object.entries(sim.foes[0])) {
+      if (typeof v === 'number') expect(Number.isFinite(v), `${k} finite`).toBe(true);
+    }
+  });
+
+  it('a mixed bag (null / primitive / capsule-less / valid) hit-tests only the valid limb', () => {
+    const good: Limb = {
+      id: 'ok',
+      capsule: { a: { x: 450, y: TORSO_Y - 40 }, b: { x: 450, y: TORSO_Y + 40 }, r: 22 },
+      severThreshold: Number.POSITIVE_INFINITY,
+    };
+    const garbage = [null, 7, 'limb', { id: 'x' }, { id: 'y', capsule: {} }, good];
+    const sim = new Sim(
+      cfg({ limbsFor: () => garbage as unknown as Limb[] }),
+      new ScriptedController([whiff]),
+    );
+    const evs = run(sim, 2, { 0: slash });
+    const hit = ofType(evs, 'hitLanded');
+    expect(hit).toHaveLength(1);
+    expect(hit[0].ev.hits.map((h) => h.limbId)).toEqual(['ok']);
+  });
+});
+
+describe('AI kunai throw through the seam (Tell 10 exercisable in the running build)', () => {
+  const fv = (over: Record<string, unknown>) => ({
+    x: 640, y: SIM_GROUND_Y, facing: -1 as const, hp: 100, hpMax: 100,
+    stance: 'balanced' as StanceId, focus: 50, critical: 0, weaponWeight: 1.5,
+    atkPlusWeapon: 10, defense: 0, deflectLearned: false, invulnMs: 0, hasSlashed: true,
+    busyMs: 0, windupMs: 0, pendingStrike: null, smokeCooldownMs: 0, iFramesMs: 0,
+    deflectMs: 0, shunpo: 100, shunpoActive: false, prevShunpoHold: false, blocking: false,
+    airborneMs: 0, airborneTotalMs: 0, airFromX: 640, airToX: 640, airApex: 0,
+    smokeMs: 0, smokeFromX: 640, smokeToX: 640, pendingSmokeMs: 0,
+    pendingStanceMs: 0, pendingStanceId: null, strokeArmed: false,
+    combo: 0, comboLastHitTick: 0, critReadyLatch: false,
+    ...over,
+  });
+  const view = (distance: number) => ({
+    self: fv({}) as never,
+    opponent: fv({ x: 640 - distance, facing: 1 }) as never,
+    distance,
+    selfStance: 'balanced' as StanceId,
+    opponentStance: 'balanced' as StanceId,
+    tFixed: 0,
+  });
+
+  it('a Normal-tier AI emits throwProjectile when the player keeps kunai range', () => {
+    const ai = new AISeamController({ rng: () => 0.01, tier: 'normal' }); // below kunaiChance
+    let threw = false;
+    for (let i = 0; i < ticksFor(AI_TIERS.normal.reactMs) + 2 && !threw; i++) {
+      threw = ai.decide(view(340), DT).throwProjectile === true;
+    }
+    expect(threw).toBe(true);
+    expect(AI_TIERS.normal.kunaiChance).toBeGreaterThan(0); // Normal+ tiers throw (config-driven)
+    expect(AI_TIERS.hard.kunaiChance).toBeGreaterThan(0);
+  });
+
+  it('the easy tier (kunaiChance 0) never throws; no tier throws inside blade range', () => {
+    const easy = new AISeamController({ rng: () => 0.01, tier: 'easy' });
+    const close = new AISeamController({ rng: () => 0.01, tier: 'normal' });
+    for (let i = 0; i < ticksFor(AI_TIERS.easy.reactMs) * 3; i++) {
+      expect(easy.decide(view(340), DT).throwProjectile).toBeUndefined();
+    }
+    for (let i = 0; i < ticksFor(AI_TIERS.normal.reactMs) * 3; i++) {
+      expect(close.decide(view(100), DT).throwProjectile).toBeUndefined(); // 100px < band min
+    }
+  });
+
+  it('integration: a retreating player draws an opponent kunai in a real seeded duel', () => {
+    const rng = makeRng(5); // deterministic: this seed throws 4 kunai in the 15s window
+    const sim = new Sim(
+      cfg({ foes: [seed({ x: 640, atkPlusWeapon: 7 })], rng }),
+      new AISeamController({ rng, tier: 'normal' }),
+    );
+    let spawned = 0;
+    for (let i = 0; i < 900 && !sim.over; i++) {
+      for (const ev of sim.advance(DT, { move: -1 })) {
+        if (ev.type === 'projectileSpawned' && ev.actor === 'opponent') spawned++;
+      }
+    }
+    expect(spawned).toBeGreaterThan(0); // the Stab+Deflect setup exists in a live duel
   });
 });

@@ -6,7 +6,14 @@
 // Determinism: ALL randomness comes from the injected seeded rng (config/combat-sim makeRng);
 // Math.random is banned in core. One rng draw feeds the FSM every tick; the counter-stance
 // pick draws once per reaction window (bounded consumption, reproducible across runs).
-import { AI_TIERS, AI_APPROACH_RANGE, AI_STRIKE_RANGE, type AITier } from '../config/ai';
+import {
+  AI_TIERS,
+  AI_APPROACH_RANGE,
+  AI_STRIKE_RANGE,
+  AI_KUNAI_RANGE,
+  AI_RECOVER_JITTER_FRAC,
+  type AITier,
+} from '../config/ai';
 import { STANCE_TABLE, STANCE_BEATS, type StanceId } from '../config/stances';
 import { SIM_GROUND_Y, STRIKE_TORSO_OFFSET, PROJECTILE_SPAWN_OFFSET } from '../config/combat-sim';
 import { nextAIState, type AIState, type AIParams } from './ai';
@@ -32,6 +39,10 @@ export class AISeamController implements OpponentController {
   private state: AIState = 'idle';
   private tInState = 0;
   private stanceEvalMs = 0;
+  private kunaiEvalMs = 0;
+  /** Seeded per-cycle recover-dwell multiplier (rolled on each entry to `recover`) so
+   *  different seeds genuinely diverge in pacing — Tell 14 harness integrity. */
+  private recoverJitter = 1;
   private readonly rng: () => number;
   private readonly tier: AITier;
   private readonly groundY: number;
@@ -54,6 +65,10 @@ export class AISeamController implements OpponentController {
     const intent: OpponentIntent = {};
     this.tInState += dtFixedMs;
 
+    // The player is "arming" when a strike windup is held OR mid-draw (strokeArmed): with
+    // PLAYER_WINDUP_MS = 0 a drawn slash resolves the tick it lands, so the AI's react
+    // window is the DRAW itself — the M1 signal (playerWindupUntil armed at stroke start).
+    const playerArming = view.opponent.windupMs > 0 || view.opponent.strokeArmed === true;
     const params: AIParams = {
       approachRange: AI_APPROACH_RANGE,
       // never telegraph from beyond own blade reach — the unified sim reach gate would whiff
@@ -62,7 +77,8 @@ export class AISeamController implements OpponentController {
       reactDodgeChance: tier.reactDodgeChance,
       telegraphMs: tier.telegraphMs,
       attackMs: tier.attackMs,
-      recoverMs: tier.recoverMs,
+      // seeded ± jitter on the recover dwell (rolled on entry) — seeds diversify pacing
+      recoverMs: tier.recoverMs * this.recoverJitter,
       reactMs: tier.reactMs,
     };
     const next = nextAIState(
@@ -70,8 +86,8 @@ export class AISeamController implements OpponentController {
       this.tInState,
       {
         distance: view.distance,
-        playerAttacking: view.opponent.windupMs > 0,
-        playerWindup: view.opponent.windupMs > 0,
+        playerAttacking: playerArming,
+        playerWindup: playerArming,
         selfRecovering: this.state === 'recover',
         playerStabIncoming: view.opponent.pendingStrike?.verb === 'stab',
         rng: this.rng(),
@@ -85,6 +101,9 @@ export class AISeamController implements OpponentController {
       // pendingSmokeMs), so telegraph-enter → land ≥ telegraphMs is a sim-provable measure.
       if (next === 'telegraph') intent.stroke = { path: this.slashPath(view), verb: 'slash' };
       if (next === 'dodge') intent.smokeBomb = true; // the react-dodge IS the smoke bomb intent
+      if (next === 'recover') {
+        this.recoverJitter = 1 + (this.rng() * 2 - 1) * AI_RECOVER_JITTER_FRAC;
+      }
     }
     intent.block = this.state === 'block';
     if (this.state === 'approach') {
@@ -99,6 +118,26 @@ export class AISeamController implements OpponentController {
       const counterStance = BEATEN_BY[view.opponentStance];
       if (counterStance !== view.selfStance && this.rng() < tier.counterStancePickChance) {
         intent.switchStance = counterStance;
+      }
+    }
+
+    // kunai throw (Tell 10 in the running build): each reaction window, when the player
+    // deliberately keeps kunai range and the AI is free, throw with tier probability —
+    // the player answers with Stab+Deflect (the stab pose swats it through the sim).
+    this.kunaiEvalMs += dtFixedMs;
+    if (this.kunaiEvalMs >= tier.reactMs) {
+      this.kunaiEvalMs = 0;
+      if (
+        tier.kunaiChance > 0 &&
+        (this.state === 'approach' || this.state === 'idle') &&
+        view.distance >= AI_KUNAI_RANGE.min &&
+        view.distance <= AI_KUNAI_RANGE.max &&
+        view.self.busyMs === 0 &&
+        !view.self.pendingStrike &&
+        view.self.pendingSmokeMs === 0 &&
+        this.rng() < tier.kunaiChance
+      ) {
+        intent.throwProjectile = true;
       }
     }
     return intent;

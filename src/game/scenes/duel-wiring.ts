@@ -78,12 +78,15 @@ export class IntentBuffer {
     );
   }
 
-  /** Merge queued discrete intents with this frame's held fields, then clear the queue. */
-  drain(held: { move: -1 | 0 | 1; shunpoHold: boolean }): PlayerIntent {
+  /** Merge queued discrete intents with this frame's held fields, then clear the queue.
+   *  `strokeArmed` = the player is mid-draw — the AI's reaction signal (M1 parity: reactions
+   *  arm at stroke START, since a zero-windup strike resolves the tick the gesture lands). */
+  drain(held: { move: -1 | 0 | 1; shunpoHold: boolean; strokeArmed?: boolean }): PlayerIntent {
     const out: PlayerIntent = {
       ...this.queued,
       move: held.move === -1 || held.move === 1 ? held.move : 0,
       shunpoHold: held.shunpoHold === true,
+      strokeArmed: held.strokeArmed === true,
     };
     this.queued = {};
     return out;
@@ -91,6 +94,42 @@ export class IntentBuffer {
 
   clear(): void {
     this.queued = {};
+  }
+}
+
+/**
+ * Spawn-invuln blink bookkeeping (Tell 9), extracted pure so the decision logic is unit-
+ * testable: blink STARTS for every fighter when FIGHT! lands and STOPS on that fighter's
+ * `invulnEnded` sim event — one blink per fighter, never two, never a stop without a start.
+ * Keys: −1 = the player, 0..n−1 = foes (the sim's foeIndex convention). The scene owns the
+ * actual tweens; it creates one per key returned by begin() and kills one per stop key.
+ */
+export class BlinkPlan {
+  private active = new Set<number>();
+
+  /** FIGHT! lands: keys to start blinking now (player + every foe), each at most once. */
+  begin(foeCount: number): number[] {
+    const n = Number.isFinite(foeCount) ? Math.max(0, Math.floor(foeCount)) : 0;
+    const keys: number[] = [];
+    for (let key = -1; key < n; key++) {
+      if (!this.active.has(key)) {
+        this.active.add(key);
+        keys.push(key);
+      }
+    }
+    return keys;
+  }
+
+  /** invulnEnded(foeIndex) → the key whose tween must stop, or null (unknown/already stopped). */
+  onInvulnEnded(foeIndex: number): number | null {
+    if (!this.active.has(foeIndex)) return null;
+    this.active.delete(foeIndex);
+    return foeIndex;
+  }
+
+  /** Fresh duel (scene create/restart): forget every tracked blink. */
+  reset(): void {
+    this.active.clear();
   }
 }
 

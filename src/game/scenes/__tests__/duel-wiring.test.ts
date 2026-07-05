@@ -8,6 +8,7 @@ import {
   parseTier,
   parseSeed,
   IntentBuffer,
+  BlinkPlan,
   duelViewOf,
   type DuelViewSource,
 } from '../duel-wiring';
@@ -90,12 +91,13 @@ describe('duel-wiring: IntentBuffer (one intent per frame into sim.advance)', ()
     b.queueStance('heavy');
     b.queueSkill(1);
     expect(b.hasQueued()).toBe(true);
-    const intent = b.drain({ move: 1, shunpoHold: true });
+    const intent = b.drain({ move: 1, shunpoHold: true, strokeArmed: true });
     expect(intent.stroke).toEqual({ path, verb: 'slash' });
     expect(intent.switchStance).toBe('heavy');
     expect(intent.useSkill).toBe(1);
     expect(intent.move).toBe(1);
     expect(intent.shunpoHold).toBe(true);
+    expect(intent.strokeArmed).toBe(true); // mid-draw signal reaches the sim (AI reaction)
     // second drain: discrete gone, held fields still applied
     const second = b.drain({ move: -1, shunpoHold: false });
     expect(second.stroke).toBeUndefined();
@@ -103,6 +105,7 @@ describe('duel-wiring: IntentBuffer (one intent per frame into sim.advance)', ()
     expect(second.useSkill).toBeUndefined();
     expect(second.move).toBe(-1);
     expect(second.shunpoHold).toBe(false);
+    expect(second.strokeArmed).toBe(false); // omitted held field reads false, never undefined-truthy
   });
 
   it('accepts exactly the configured skill slots and drops hostile slot numbers', () => {
@@ -122,9 +125,11 @@ describe('duel-wiring: IntentBuffer (one intent per frame into sim.advance)', ()
     const intent = b.drain({
       move: 5 as unknown as -1 | 0 | 1,
       shunpoHold: 'yes' as unknown as boolean,
+      strokeArmed: 1 as unknown as boolean,
     });
     expect(intent.move).toBe(0);
     expect(intent.shunpoHold).toBe(false);
+    expect(intent.strokeArmed).toBe(false); // strict === true gate, truthy junk collapses
   });
 
   it('clear() empties the queue without draining', () => {
@@ -133,6 +138,41 @@ describe('duel-wiring: IntentBuffer (one intent per frame into sim.advance)', ()
     b.clear();
     expect(b.hasQueued()).toBe(false);
     expect(b.drain({ move: 0, shunpoHold: false }).switchStance).toBeUndefined();
+  });
+});
+
+describe('duel-wiring: BlinkPlan (Tell 9 — blink start on FIGHT!, stop on invulnEnded)', () => {
+  it('begin(foeCount) starts the player (−1) and every foe exactly once', () => {
+    const plan = new BlinkPlan();
+    expect(plan.begin(3)).toEqual([-1, 0, 1, 2]);
+    expect(plan.begin(3)).toEqual([]); // a second FIGHT! can never double a tween per fighter
+  });
+
+  it('onInvulnEnded stops each key once — the exact-sim-frame stop, never a double-stop', () => {
+    const plan = new BlinkPlan();
+    plan.begin(2);
+    expect(plan.onInvulnEnded(-1)).toBe(-1); // player firstSlash/timeout
+    expect(plan.onInvulnEnded(-1)).toBeNull(); // already stopped — no second tween kill
+    expect(plan.onInvulnEnded(0)).toBe(0);
+    expect(plan.onInvulnEnded(1)).toBe(1);
+    expect(plan.onInvulnEnded(1)).toBeNull();
+  });
+
+  it('CHAOS: hostile keys/counts never corrupt the plan', () => {
+    const plan = new BlinkPlan();
+    expect(plan.begin(Number.NaN)).toEqual([-1]); // hostile count → only the player blinks
+    expect(plan.begin(-5)).toEqual([]); // negative clamps to no foes; player already tracked
+    expect(plan.begin(2.9)).toEqual([0, 1]); // fractional floors; player already tracked
+    expect(plan.onInvulnEnded(99)).toBeNull(); // unknown foe index — never a stray stop
+    expect(plan.onInvulnEnded(Number.NaN)).toBeNull();
+  });
+
+  it('reset() forgets everything (fresh duel after R-restart)', () => {
+    const plan = new BlinkPlan();
+    plan.begin(1);
+    plan.reset();
+    expect(plan.onInvulnEnded(-1)).toBeNull(); // stale key gone
+    expect(plan.begin(1)).toEqual([-1, 0]); // full restart re-blinks everyone
   });
 });
 

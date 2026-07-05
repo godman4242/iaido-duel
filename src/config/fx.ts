@@ -57,6 +57,7 @@ export const FINISHER_FLASH = {
   silhouetteThreshold: 0.45, // INFERRED (survey §4) — luma below this renders black, above renders red
   keepWindowBands: true, // §4 — interiors keep window shapes as red/black stripes
   slowMoScale: 0.35, // INFERRED (survey §9) — slow-mo timescale during the finisher beat
+  slowMoRampMs: 90, // INFERRED — the clock RAMPS to slowMoScale over this (blueprint §3.11 "ramps... over the configured ms"); Ruffle frame-step calibration may overwrite
 } as const;
 
 // §7 YOU WIN anatomy — flat red field, black ground strip w/ grass nicks, fighter-pose

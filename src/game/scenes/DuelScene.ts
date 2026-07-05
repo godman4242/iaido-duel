@@ -40,7 +40,13 @@ import {
   resumeAudio,
   toggleMuted,
 } from '../audio/sfx';
-import { Sim, type SimEvent, type FighterSimState, type Actor } from '../../core/Sim';
+import {
+  Sim,
+  type SimEvent,
+  type FighterSimState,
+  type FighterSeed,
+  type Actor,
+} from '../../core/Sim';
 import { AISeamController } from '../../core/AISeamController';
 import { worldLimbs } from '../fighter/Skeleton';
 import type { Limb } from '../../core/slash';
@@ -48,6 +54,7 @@ import type { Pt } from '../../core/vec';
 import type { StanceId } from '../../core/stance';
 import {
   IntentBuffer,
+  BlinkPlan,
   nextStance,
   clampFoeCount,
   parseTier,
@@ -90,6 +97,7 @@ export class DuelScene extends Phaser.Scene {
   private intro?: DuelIntro;
   private result?: DuelResult;
   private intents = new IntentBuffer();
+  private blinkPlan = new BlinkPlan(); // pure start/stop decisions (Tell 9) — unit-tested
   private blinkTweens = new Map<number, Phaser.Tweens.Tween>();
   private keys!: Record<'left' | 'right' | 'shift', Phaser.Input.Keyboard.Key>;
   private travelIn = false;
@@ -118,6 +126,7 @@ export class DuelScene extends Phaser.Scene {
     this.ended = false;
     this.strokeArmed = false;
     this.intents.clear();
+    this.blinkPlan.reset();
     this.blinkTweens.clear();
     this.intro = undefined;
     this.result = undefined;
@@ -134,7 +143,7 @@ export class DuelScene extends Phaser.Scene {
     const foeCount = clampFoeCount(params.get('foes')); // ?foes=N sparring dummies (Tell 5)
     const px = GAME_W * SPAWN_X_FRAC.player;
     const ex = GAME_W * SPAWN_X_FRAC.opponent;
-    const foeSeeds = [{ x: ex, ...ENEMY_BASE }];
+    const foeSeeds: FighterSeed[] = [{ x: ex, ...ENEMY_BASE }];
     for (let i = 1; i < foeCount; i++) foeSeeds.push({ x: ex + i * MULTI_FOE_SPACING, ...DUMMY_BASE });
     this.controller = new AISeamController({ rng, tier, groundY: GROUND_Y });
     this.sim = new Sim(
@@ -324,17 +333,21 @@ export class DuelScene extends Phaser.Scene {
     return this.combatStarted && !this.ended && !this.sim.over;
   }
 
-  /** FIGHT! lands: unfreeze the sim and start the spawn-invuln blink (Tell 9). */
+  /** FIGHT! lands: unfreeze the sim, arm the HUD zones, start the spawn-invuln blink (Tell 9). */
   private startCombat(): void {
     if (this.combatStarted) return;
     this.combatStarted = true;
-    this.startBlink(-1, this.player);
-    this.foes.forEach((f, i) => this.startBlink(i, f));
+    // HUD zones only consume clicks while combat is LIVE — during DuelIntro they must let
+    // the click fall through to the scene-level intro-skip listener (stopPropagation fix)
+    this.hud.setInteractiveEnabled(true);
+    for (const key of this.blinkPlan.begin(this.foes.length)) this.startBlink(key);
   }
 
   // ── spawn-invuln blink: started at combat start, stopped by the invulnEnded sim event ──
 
-  private startBlink(key: number, target: Fighter): void {
+  private startBlink(key: number): void {
+    const target = key === -1 ? this.player : this.foes[key];
+    if (!target) return;
     this.blinkTweens.get(key)?.stop();
     this.blinkTweens.set(
       key,
@@ -410,15 +423,19 @@ export class DuelScene extends Phaser.Scene {
         playWhiff(this.attackerStance(ev.actor)); // SFX_FIRE_FRAMES.whiff = resolve
         break;
       case 'blocked':
-        this.sparkFx.swat(ev.point); // armor-parry spark (s-fx: swat doubles as the block spark)
-        playArmor(this.attackerStance(ev.actor)); // SFX_FIRE_FRAMES.armor = resolve
+        this.sparkFx.swat(ev.point); // spark on every null (swat doubles as the block spark)
+        // the armor-parry CUE is reserved for a true block pose — spawn-invuln and smoke
+        // i-frame nulls read as a lighter spark-only beat (Tell 28 parry ≠ invuln null)
+        if (ev.reason === 'block') playArmor(this.attackerStance(ev.actor)); // SFX_FIRE_FRAMES.armor = resolve
         break;
       case 'stanceSwitched':
         playStanceSwitch();
         break;
-      case 'invulnEnded':
-        this.stopBlink(ev.foeIndex); // exact sim frame (Tell 9)
+      case 'invulnEnded': {
+        const key = this.blinkPlan.onInvulnEnded(ev.foeIndex);
+        if (key !== null) this.stopBlink(key); // exact sim frame (Tell 9)
         break;
+      }
       case 'smokeBombUsed':
         this.smoke.teleport(ev.fromX, ev.toX); // puff at vanish + reappear (Tell 10)
         break;
@@ -427,14 +444,15 @@ export class DuelScene extends Phaser.Scene {
         playArmor();
         break;
       case 'projectileHit': {
-        const victim = ev.actor === 'opponent' ? this.player : this.enemy;
+        const victim = this.targetPuppet(ev.actor, ev.targetIndex); // victim travels in the event
         victim.hitAnim();
         if (victim === this.player) playGrunt();
         break;
       }
       case 'chiPunchLanded': {
-        const idx = this.sim.foes.findIndex((f) => f.hp > 0);
-        const victim = ev.actor === 'player' ? (this.foes[idx] ?? this.enemy) : this.player;
+        // the sim carries the victim IN the event — never re-derive from post-damage state
+        // (a killing blow used to flinch the wrong puppet in ?foes>=2 duels)
+        const victim = this.targetPuppet(ev.actor, ev.targetIndex);
         victim.hitAnim();
         this.sparkFx.swat(this.torsoPoint(victim)); // impact flash (Tell 12)
         playFlesh(this.attackerStance(ev.actor));
@@ -479,6 +497,7 @@ export class DuelScene extends Phaser.Scene {
     this.time.timeScale = 1;
     this.tweens.timeScale = 1;
     this.ended = true;
+    this.hud.setInteractiveEnabled(false); // dead HUD zones must not swallow result-screen clicks
     const playerWon = winner === 'player';
     const loser = playerWon ? this.enemy : this.player;
     this.gore.pool({ x: loser.x, y: 0 }); // persists — the pool marks the corpse (tell #8)
@@ -521,6 +540,7 @@ export class DuelScene extends Phaser.Scene {
     return this.intents.drain({
       move: move as -1 | 0 | 1,
       shunpoHold: this.keys.shift.isDown, // SHIFT hold = Shunpo (Tell 16)
+      strokeArmed: this.strokeArmed, // mid-draw — the AI's reaction signal (M1 parity)
     });
   }
 
@@ -580,6 +600,7 @@ export class DuelScene extends Phaser.Scene {
         y: opp.y,
         windupMs: opp.windupMs,
         pendingSmokeMs: opp.pendingSmokeMs,
+        pendingStanceMs: opp.pendingStanceMs, // stance-flash telegraph paints the caret too (§3.9)
         blocking: opp.blocking,
       },
       dt,

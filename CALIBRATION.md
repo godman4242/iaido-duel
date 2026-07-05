@@ -27,7 +27,7 @@ waiting on footage.
 | 3 | Slash timing per stance | ±1 frame | `timing.ts` SLASH_FRAMES | M1: per-stance frames drive the avatar swing (Light fast/long, Heavy slow/short); not yet Ruffle-stepped | INFERRED |
 | 4 | Blade-trail render | width ±1px, fade ±20ms | `combat.ts` BLADE_* | M1: two-layer tapered ribbon — chi-blue edge + white core, pinched tips, fat mid; width/fade/taper in config. Matches survey "blue ribbon"; not yet ±1px-measured | INFERRED |
 | 5 | Camera (baseline + impact) | mag ±10%, dur ±20ms | (M2) | side-scroll, zooms out when fighters separate | INFERRED |
-| 6 | Kill/finisher beat | freeze ±1f, ramp ±20ms | (M2) | red full-screen flash on a duel-ending blow; "YOU WIN" splash | INFERRED |
+| 6 | Kill/finisher beat | freeze ±1f, ramp ±20ms | `fx.ts` FINISHER_FLASH (`slowMoScale` 0.35, `slowMoRampMs` 90, `snapInMs` 60, `durationMs` 420) | red full-screen flash on a duel-ending blow; "YOU WIN" splash. M2 verify-pass: `time.timeScale` now RAMPS to the factor over `slowMoRampMs` (blueprint §3.11 wording); ramp length not yet Ruffle-stepped — if the original hard-cuts, set `slowMoRampMs` to 0 and this row stays honest | INFERRED |
 | 7 | Shunpo | factor + drain | (M2) | not observed in Duels footage → candidate DESIGN-FROM-LORE | INFERRED |
 | 8 | Blood FX | dir/count/decals | `combat.ts` BLOOD_* | M1: directional gout — emitter angle re-aimed onto the cut vector ±42° cone (bright red over muted ground); count/spread/speed/gravity in config; sever decals + flung limbs retained. Count/spread not yet footage-measured | INFERRED |
 | 9 | Parallax | layer count + ratios | (M1 bg) | sky / mountains / mid silhouettes / foreground band | INFERRED |

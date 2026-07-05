@@ -231,6 +231,7 @@ describe('skill bar (blueprint §3.8 — numbered slots, click or 1/2/3)', () =>
   it('clicking each slot zone fires the callback with the config-mapped skill id', () => {
     const { scene, zones } = makeScene();
     const hud = new Hud(scene);
+    hud.setInteractiveEnabled(true); // combat is live (FIGHT! landed) — zones are hot
     hud.update();
     const fired: Array<[string, number]> = [];
     hud.onSkillSlot((id, slot) => fired.push([id, slot]));
@@ -277,6 +278,7 @@ describe('skill bar (blueprint §3.8 — numbered slots, click or 1/2/3)', () =>
   it('CHAOS: 1000 spam-clicks on slot 1 fire 1000 times without throwing or corrupting state', () => {
     const { scene, zones } = makeScene();
     const hud = new Hud(scene);
+    hud.setInteractiveEnabled(true);
     hud.update();
     const cb = vi.fn();
     hud.onSkillSlot(cb);
@@ -331,6 +333,7 @@ describe('stance portrait (Tell 8/23* — click-to-swap, reflects current stance
   it('the portrait zone matches STANCE_PORTRAIT_HIT and clicking it requests a stance swap', () => {
     const { scene, zones } = makeScene();
     const hud = new Hud(scene);
+    hud.setInteractiveEnabled(true);
     hud.update();
     const cb = vi.fn();
     hud.onStanceSwap(cb);
@@ -360,10 +363,43 @@ describe('stance portrait (Tell 8/23* — click-to-swap, reflects current stance
   it('CHAOS: portrait click with no callback registered never throws', () => {
     const { scene, zones } = makeScene();
     const hud = new Hud(scene);
+    hud.setInteractiveEnabled(true);
     hud.update();
     expect(() =>
       zoneAt(zones, STANCE_PORTRAIT_HIT).emit('pointerdown', null, 0, 0, undefined),
     ).not.toThrow();
+  });
+
+  it('REGRESSION: while DISARMED (DuelIntro up) a zone click neither fires nor stopPropagations — the intro-skip click falls through', () => {
+    // Repro of the finding: Hud boots in combat mode BEFORE FIGHT!, so its zones used to
+    // cancel pointerdown via stopPropagation and the scene-level intro fast-forward never
+    // saw clicks landing on the (invisible, overlay-covered) portrait/skill rects.
+    const { scene, zones } = makeScene();
+    const hud = new Hud(scene); // default: interactive DISARMED until startCombat()
+    hud.update();
+    const swap = vi.fn();
+    const skill = vi.fn();
+    hud.onStanceSwap(swap);
+    hud.onSkillSlot(skill);
+    const stop = vi.fn();
+    zoneAt(zones, STANCE_PORTRAIT_HIT).emit('pointerdown', null, 0, 0, { stopPropagation: stop });
+    for (const r of SKILL_SLOT_RECTS)
+      zoneAt(zones, r).emit('pointerdown', null, 0, 0, { stopPropagation: stop });
+    expect(stop).not.toHaveBeenCalled(); // the click reaches the scene → intro.skip() works
+    expect(swap).not.toHaveBeenCalled();
+    expect(skill).not.toHaveBeenCalled();
+
+    // FIGHT! lands → zones arm: clicks now fire AND are consumed (no stray slash strokes)
+    hud.setInteractiveEnabled(true);
+    zoneAt(zones, STANCE_PORTRAIT_HIT).emit('pointerdown', null, 0, 0, { stopPropagation: stop });
+    expect(swap).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+
+    // kill beat → disarmed again: a dead HUD must not swallow result-screen clicks
+    hud.setInteractiveEnabled(false);
+    zoneAt(zones, STANCE_PORTRAIT_HIT).emit('pointerdown', null, 0, 0, { stopPropagation: stop });
+    expect(swap).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
   });
 
   it('the portrait rim retints when the polled stance changes (dirty-chrome redraw)', () => {

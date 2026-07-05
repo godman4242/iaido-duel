@@ -9,8 +9,8 @@ import { describe, it, expect } from 'vitest';
 import { Sim, type SimConfig } from '../Sim';
 import { ScriptedController } from '../ScriptedController';
 import type { OpponentIntent } from '../OpponentController';
-import { makeRng, SIM_GROUND_Y, STRIKE_TORSO_OFFSET } from '../../config/combat-sim';
-import { FIXED_DT_MS } from '../../config/timing';
+import { makeRng, SIM_GROUND_Y, STRIKE_TORSO_OFFSET, PLAYER_WINDUP_MS } from '../../config/combat-sim';
+import { FIXED_DT_MS, SLASH_FRAMES } from '../../config/timing';
 
 const DT = FIXED_DT_MS;
 const TORSO_Y = SIM_GROUND_Y - STRIKE_TORSO_OFFSET;
@@ -50,16 +50,20 @@ describe('§4 chaos — hostile dt cannot poison the accumulator (silent-freeze 
     expect(sim.tFixed).toBeCloseTo(DT * 4, 9);
   });
 
-  it('interleaving hostile dt INSIDE a running duel neither freezes time nor drops the queued intent', () => {
+  it('interleaving hostile dt INSIDE a running duel neither freezes time nor corrupts combat state', () => {
     const sim = new Sim(baseCfg(), new ScriptedController([]));
     sim.advance(DT, slash); // queue + consume a strike normally
     const tAfterOne = sim.tFixed;
     expect(tAfterOne).toBeCloseTo(DT, 9);
-    expect(sim.player.pendingStrike?.verb).toBe('slash');
+    // PLAYER_WINDUP_MS = 0: the strike resolved on its queue tick — the busy lock is the
+    // live combat state a hostile burst must not corrupt (was pendingStrike pre-restore)
+    const busyAfterOne = sim.player.busyMs;
+    expect(busyAfterOne).toBeGreaterThan(0);
     for (let i = 0; i < 10; i++) sim.advance(Number.NaN); // mid-duel hostile burst
+    expect(sim.player.busyMs).toBe(busyAfterOne); // hostile frames advanced nothing
     sim.advance(DT);
     expect(sim.tFixed).toBeCloseTo(DT * 2, 9); // still ticking
-    expect(sim.player.pendingStrike?.verb).toBe('slash'); // windup state untouched
+    expect(sim.player.busyMs).toBeCloseTo(busyAfterOne - DT, 9); // and time flows normally
   });
 });
 
@@ -100,7 +104,12 @@ describe('§4 chaos — sustained 120Hz feed never loses queued intents (intent-
     // 360 third-frames = 120 steps = 2s of sim time; the busy-lock cadence admits a strike
     // only every windup+busy cycle — spam must not multi-fire within a cycle
     expect(sim.tFixed).toBeCloseTo(120 * DT, 6);
+    const f = SLASH_FRAMES.balanced;
+    const cycleTicks = Math.max(
+      1,
+      Math.ceil(PLAYER_WINDUP_MS / DT) + f.windup + f.active + f.recovery,
+    );
     expect(slashStartedCount).toBeGreaterThanOrEqual(1);
-    expect(slashStartedCount).toBeLessThanOrEqual(3); // 2s / (~366+350ms cycle) ⇒ at most 3
+    expect(slashStartedCount).toBeLessThanOrEqual(Math.ceil(120 / cycleTicks)); // one per cycle
   });
 });

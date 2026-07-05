@@ -30,7 +30,12 @@ export const SHUNPO_MIN_TO_START = 10; // meter needed to start a burst (empty-m
 
 // ── Movement / windup (ports of DuelScene literals — frozen port contract) ──────────────────
 export const PLAYER_MOVE_SPEED = 0.28; // px/ms (was DuelScene MOVE_SPEED)
-export const PLAYER_WINDUP_MS = 360; // player strike telegraph (was playerWindupUntil = now+360)
+// Player strike windup before damage resolves. 0 = the drawn slash resolves on the SAME sim
+// tick the gesture lands — the M1/original signature feel (M1's doSlash ran synchronously in
+// the stroke onEnd handler). NOTE the pre-port `playerWindupUntil = now + 360` literal was set
+// at stroke START and ONLY armed the AI's reaction check (isTargetWindup); it never delayed
+// damage — the AI reaction signal is now the held `strokeArmed` intent, not this windup.
+export const PLAYER_WINDUP_MS = 0;
 export const LAUNCH_KNOCKUP_MS = 480; // knock-up airtime on a landed launch (was 240ms up + yoyo)
 
 // ── Per-fighter seeds (ports of DuelScene fighter-construction literals) ────────────────────
@@ -43,7 +48,10 @@ export const PLAYER_BASE = {
   deflectLearned: true, // M2: player has Deflect (skill-tree gating is M3)
 } as const;
 export const ENEMY_BASE = {
-  hp: 100,
+  // 100 → 150 with the instant-slash restore (PLAYER_WINDUP_MS 0): punishes now land the
+  // tick they are drawn, so the ronin needs more health for the Normal duel to stay inside
+  // DUEL_TARGET_SECONDS (§3.10 Tell 14 — measured median 24.7s over 24 seeds). INFERRED.
+  hp: 150,
   atkPlusWeapon: 7,
   defense: 5,
   stance: 'heavy' as StanceId,

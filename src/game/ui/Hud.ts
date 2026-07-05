@@ -109,6 +109,11 @@ export class Hud {
   private duelSource: (() => HudDuelView) | null = null;
   private stanceSwapCb: (() => void) | null = null;
   private skillSlotCb: SkillSlotHandler | null = null;
+  /** Zones consume clicks ONLY while true — the integrator arms this when combat is LIVE
+   *  (FIGHT! landed) and disarms it on the kill beat. While false, a click over a zone falls
+   *  through to scene-level listeners (intro skip / GestureInput) instead of being swallowed
+   *  by stopPropagation. Defaults false; the legacy Fighter/Focus wiring arms it itself. */
+  private interactiveEnabled = false;
   private skillViews: readonly HudSkillView[] | null = null;
   private zones: Phaser.GameObjects.Zone[] = [];
   private portraitHover = false;
@@ -214,6 +219,7 @@ export class Hud {
     // Legacy DuelScene wiring: combat mode + YOU/RONIN floating labels (§3 colors).
     if (opts) {
       this.mode = 'combat';
+      this.interactiveEnabled = true; // the legacy path has no intro — zones are hot at once
       this.attachNameLabel(opts.player, 'YOU', 'player');
       this.attachNameLabel(opts.enemy, 'RONIN', 'hostile', {
         hp: () => (opts.enemy.maxHealth > 0 ? opts.enemy.health / opts.enemy.maxHealth : 0),
@@ -228,6 +234,17 @@ export class Hud {
       this.mode = mode;
       this.dirty = true;
     }
+  }
+
+  /**
+   * Arm/disarm the interactive zones (portrait + skill slots). While DISARMED a pointerdown
+   * over a zone neither fires the handler NOR calls stopPropagation, so the click falls
+   * through to scene-level listeners — the DuelIntro skip click works over HUD rects, and a
+   * dead post-duel HUD cannot swallow result-screen clicks. Arm on FIGHT!, disarm on kill.
+   */
+  setInteractiveEnabled(on: boolean): this {
+    this.interactiveEnabled = on === true;
+    return this;
   }
 
   /**
@@ -573,8 +590,10 @@ export class Hud {
     z.on(
       'pointerdown',
       (_p: unknown, _lx: unknown, _ly: unknown, ev?: { stopPropagation?: () => void }) => {
-        if (this.mode !== 'combat') return;
-        ev?.stopPropagation?.(); // keep HUD clicks from also starting a slash stroke
+        // return BEFORE stopPropagation while disarmed/non-combat — the click must fall
+        // through to the scene (intro fast-forward, GestureInput) instead of dying here
+        if (this.mode !== 'combat' || !this.interactiveEnabled) return;
+        ev?.stopPropagation?.(); // keep live-combat HUD clicks from also starting a slash stroke
         down();
       },
     );

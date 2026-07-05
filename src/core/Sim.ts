@@ -123,6 +123,9 @@ export interface FighterSimState {
   smokeFromX: number;
   smokeToX: number;
   pendingSmokeMs: number; // AI smoke bomb telegraphs for tier telegraphMs before executing
+  pendingStanceMs: number; // AI stance switch telegraphs (stanceFlash) before applying (§3.9)
+  pendingStanceId: StanceId | null; // the switch that lands when pendingStanceMs expires
+  strokeArmed: boolean; // held: the player is mid-draw (the AI's reaction signal — M1 parity)
   combo: number;
   comboLastHitTick: number; // keyed to tFixed (restart-safe, no scene wall-clock)
   critReadyLatch: boolean; // one-shot critReady event edge latch
@@ -151,7 +154,14 @@ export type SimEvent =
   | { type: 'critLanded'; actor: Actor; dmg: number }
   | { type: 'critReady'; actor: Actor }
   | { type: 'whiffed'; actor: Actor }
-  | { type: 'blocked'; actor: Actor; point: Pt } // actor = attacker whose hit was nulled
+  | {
+      type: 'blocked';
+      actor: Actor; // attacker whose hit was nulled
+      point: Pt;
+      /** WHY the damage nulled: a held block pose is the true armor-parry; spawn invuln and
+       *  smoke i-frames are invulnerability nulls (the scene plays a lighter cue for those). */
+      reason: 'block' | 'invuln' | 'iframes';
+    }
   | { type: 'stanceSwitched'; actor: Actor; from: StanceId; to: StanceId; focusLeft: number }
   | { type: 'stanceSwitchDenied'; actor: Actor; reason: 'focus' | 'invalidId' }
   | {
@@ -162,9 +172,9 @@ export type SimEvent =
     }
   | { type: 'smokeBombUsed'; actor: Actor; fromX: number; toX: number }
   | { type: 'projectileSpawned'; actor: Actor; id: number; x: number; vx: number }
-  | { type: 'projectileHit'; actor: Actor; id: number; dmg: number } // actor = thrower
+  | { type: 'projectileHit'; actor: Actor; id: number; dmg: number; targetIndex: number } // actor = thrower; targetIndex −1 = the player
   | { type: 'deflectSuccess'; actor: Actor; id: number; point: Pt } // actor = deflector
-  | { type: 'chiPunchLanded'; actor: Actor; dmg: number }
+  | { type: 'chiPunchLanded'; actor: Actor; dmg: number; targetIndex: number } // targetIndex −1 = the player
   | { type: 'jumpStarted'; actor: Actor; fromX: number; toX: number; durationMs: number }
   | { type: 'launchLanded'; actor: Actor; targetIndex: number; knockUp: number }
   | { type: 'shunpoStarted'; actor: Actor }
@@ -228,7 +238,7 @@ export class Sim {
   private acc = 0;
   private events: SimEvent[] = [];
   private pendingIntents: OpponentIntent[] = [];
-  private held = { move: 0 as -1 | 0 | 1, shunpoHold: false, block: false };
+  private held = { move: 0 as -1 | 0 | 1, shunpoHold: false, block: false, strokeArmed: false };
   private nextProjectileId = 1;
   private readonly groundY: number;
   private readonly tier: AITier;
@@ -291,6 +301,9 @@ export class Sim {
       smokeFromX: x,
       smokeToX: x,
       pendingSmokeMs: 0,
+      pendingStanceMs: 0,
+      pendingStanceId: null,
+      strokeArmed: false,
       combo: 0,
       comboLastHitTick: -(COMBO_WINDOW_MS * 2),
       critReadyLatch: false,
@@ -319,6 +332,7 @@ export class Sim {
     this.held.move = intent.move === -1 || intent.move === 1 ? intent.move : 0;
     this.held.shunpoHold = !!intent.shunpoHold;
     this.held.block = !!intent.block;
+    this.held.strokeArmed = !!intent.strokeArmed;
     // discrete fields: bounded FIFO (a zero-delta spam loop cannot grow it unbounded)
     if (
       !this.over &&
@@ -375,10 +389,17 @@ export class Sim {
             move: this.held.move,
             shunpoHold: this.held.shunpoHold,
             block: this.held.block,
+            strokeArmed: this.held.strokeArmed,
           },
           dt,
         );
       }
+
+      // 5b. zero-windup strikes resolve the SAME tick they were queued — the player's drawn
+      //     slash lands ON gesture end (PLAYER_WINDUP_MS = 0, the M1/original signature feel).
+      //     Windups > 0 are untouched (windupMs gate); opponent-first keeps the §3 tie rule.
+      if (!this.over) this.resolveExpiredStrike(this.foes[0], 'opponent');
+      if (!this.over) this.resolveExpiredStrike(this.player, 'player');
 
       // 6. projectiles (after intents so a stab THIS tick can swat a kunai THIS tick)
       if (!this.over) this.stepProjectiles(dt);
@@ -407,6 +428,17 @@ export class Sim {
     if (f.pendingSmokeMs > 0) {
       f.pendingSmokeMs = tickDown(f.pendingSmokeMs, dt);
       if (f.pendingSmokeMs === 0) this.executeSmokeBomb(f, side);
+    }
+
+    // AI stance-flash telegraph → the switch applies at expiry (§3.9: telegraph-enter →
+    // stance-land ≥ telegraphMs; the player's own switch stays instant in trySwitchStance)
+    if (f.pendingStanceMs > 0) {
+      f.pendingStanceMs = tickDown(f.pendingStanceMs, dt);
+      if (f.pendingStanceMs === 0) {
+        const id = f.pendingStanceId;
+        f.pendingStanceId = null;
+        if (id) this.executeStanceSwitch(f, side, id);
+      }
     }
 
     // teleport slide (sim-owned motion — no tween writes x)
@@ -457,6 +489,7 @@ export class Sim {
   private applyIntent(f: FighterSimState, side: Actor, intent: OpponentIntent, dt: number): void {
     if (this.over) return;
     f.blocking = !!intent.block;
+    f.strokeArmed = !!intent.strokeArmed; // mid-draw signal the AI reacts to (M1 parity)
     this.applyMove(f, side, intent.move, dt);
     if (side === 'player') this.applyShunpoHold(f, side, !!intent.shunpoHold);
     if (intent.switchStance !== undefined) this.trySwitchStance(f, side, intent.switchStance);
@@ -495,25 +528,36 @@ export class Sim {
       this.events.push({ type: 'stanceSwitchDenied', actor: side, reason: 'invalidId' });
       return;
     }
+    if (f.pendingStanceMs > 0) return; // a telegraphed switch is already committed (spam guard)
     if (id === f.stance) return; // no-op, no cost, no event
     if (f.focus < FOCUS_SWITCH_COST) {
       this.events.push({ type: 'stanceSwitchDenied', actor: side, reason: 'focus' });
       return;
     }
+    if (side === 'opponent') {
+      // §3.9: every committing AI action telegraphs ≥ tier telegraphMs before it LANDS —
+      // the stance-flash telegraph fires now, the switch applies when the window expires
+      // (mirrors the pendingSmokeMs pattern). The player's own switch stays instant.
+      const durationMs = AI_TIERS[this.tier].telegraphMs;
+      f.pendingStanceMs = durationMs;
+      f.pendingStanceId = id;
+      this.events.push({ type: 'telegraphStarted', actor: side, kind: 'stanceFlash', durationMs });
+      return;
+    }
+    this.executeStanceSwitch(f, side, id);
+  }
+
+  /** Apply a validated stance switch (player: instantly; opponent: on stance-flash expiry).
+   *  Focus can only GROW between queue and expiry (nothing else spends it), so the queue-time
+   *  focus check still holds here; re-guard id/stance defensively for the delayed path. */
+  private executeStanceSwitch(f: FighterSimState, side: Actor, id: StanceId): void {
+    if (!STANCE_TABLE[id] || id === f.stance) return;
     const from = f.stance;
-    f.focus -= FOCUS_SWITCH_COST;
+    f.focus = Math.max(0, f.focus - FOCUS_SWITCH_COST);
     f.stance = id;
     f.weaponWeight = WEAPON_WEIGHT[id];
     f.critical = criticalAfterStanceSwitch(f.critical); // patch behavior (Tell 7)
     this.events.push({ type: 'stanceSwitched', actor: side, from, to: id, focusLeft: f.focus });
-    if (side === 'opponent') {
-      this.events.push({
-        type: 'telegraphStarted',
-        actor: side,
-        kind: 'stanceFlash',
-        durationMs: AI_TIERS[this.tier].telegraphMs,
-      });
-    }
   }
 
   private trySmokeBomb(f: FighterSimState, side: Actor): void {
@@ -650,7 +694,25 @@ export class Sim {
   private limbsOf(index: number): Limb[] {
     const side = index === -1 ? 'player' : 'foe';
     const injected = this.limbsFor?.(side, Math.max(0, index));
-    if (injected && injected.length) return injected;
+    // Hostile-input guard (untyped JS limbsFor — the one injected callback without one):
+    // drop shape-invalid limbs so a malformed entry degrades to a whiff / the default body
+    // capsule instead of a mid-tick TypeError (mirrors the stroke-path point filter).
+    const valid = Array.isArray(injected)
+      ? injected.filter(
+          (l): l is Limb =>
+            !!l &&
+            typeof l === 'object' &&
+            !!l.capsule &&
+            typeof l.capsule === 'object' &&
+            !!l.capsule.a &&
+            !!l.capsule.b &&
+            typeof l.capsule.a.x === 'number' &&
+            typeof l.capsule.a.y === 'number' &&
+            typeof l.capsule.b.x === 'number' &&
+            typeof l.capsule.b.y === 'number',
+        )
+      : [];
+    if (valid.length) return valid;
     const t = index === -1 ? this.player : this.foes[index];
     return [
       {
@@ -797,7 +859,11 @@ export class Sim {
     }
     const point: Pt = { x: t.x, y: t.y - STRIKE_TORSO_OFFSET };
     const applied = this.applyDamage(t, index, side, CHI_PUNCH_DMG_L1, point); // CONTRACT flat 10
-    if (applied > 0) this.events.push({ type: 'chiPunchLanded', actor: side, dmg: applied });
+    if (applied > 0) {
+      // targetIndex travels IN the event — the scene must never re-derive the victim from
+      // post-damage state (a killing blow would flinch the wrong puppet in multi-foe duels)
+      this.events.push({ type: 'chiPunchLanded', actor: side, dmg: applied, targetIndex: index });
+    }
   }
 
   /** Single damage gate: spawn invuln, smoke i-frames and block all null damage (blocked beat);
@@ -811,7 +877,10 @@ export class Sim {
   ): number {
     if (this.over) return 0;
     if (t.invulnMs > 0 || t.iFramesMs > 0 || t.blocking) {
-      this.events.push({ type: 'blocked', actor: attacker, point });
+      // reason distinguishes the true armor-parry (block pose) from invulnerability nulls —
+      // the scene must not play the parry cue for a spawn-invulnerable / smoke-i-frame target
+      const reason = t.blocking ? 'block' : t.invulnMs > 0 ? 'invuln' : 'iframes';
+      this.events.push({ type: 'blocked', actor: attacker, point, reason });
       return 0;
     }
     const applied = Math.max(0, Math.min(t.hp, Math.round(num(dmg, 0))));
@@ -873,7 +942,13 @@ export class Sim {
             y: t.y - STRIKE_TORSO_OFFSET,
           });
           if (applied > 0) {
-            this.events.push({ type: 'projectileHit', actor: thrower, id: p.id, dmg: applied });
+            this.events.push({
+              type: 'projectileHit',
+              actor: thrower,
+              id: p.id,
+              dmg: applied,
+              targetIndex: index, // the victim travels in the event (never re-derived by the scene)
+            });
           }
           consumed = true;
           break;

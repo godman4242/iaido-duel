@@ -120,7 +120,20 @@ describe('FinisherFlash lifecycle', () => {
     flash.play([{ x: 100, y: 100, facing: 1 }], { onDone });
 
     expect(flash.isActive).toBe(true);
-    expect(raw.time.timeScale).toBe(FINISHER_FLASH.slowMoScale); // slow-mo applied
+
+    // §3.11 measure, verbatim: timeScale RAMPS to the configured factor over the configured
+    // ms — an intermediate value must exist mid-ramp (it was an instant set before the fix).
+    events.emit('update', 0, FINISHER_FLASH.slowMoRampMs / 2);
+    expect(raw.time.timeScale).toBeLessThan(1);
+    expect(raw.time.timeScale).toBeGreaterThan(FINISHER_FLASH.slowMoScale);
+    expect(raw.time.timeScale).toBeCloseTo(
+      1 + (FINISHER_FLASH.slowMoScale - 1) / 2,
+      9,
+    );
+    expect(raw.tweens.timeScale).toBe(raw.time.timeScale); // both clocks ramp together
+
+    events.emit('update', 0, FINISHER_FLASH.slowMoRampMs / 2);
+    expect(raw.time.timeScale).toBe(FINISHER_FLASH.slowMoScale); // factor reached, holds
 
     events.emit('update', 0, FULL_MS);
     expect(onDone).toHaveBeenCalledTimes(1);

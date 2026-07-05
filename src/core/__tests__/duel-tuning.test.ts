@@ -235,6 +235,16 @@ describe('duel tuning — harness integrity', () => {
   it('no-play never lands a hit (the policy is genuinely passive)', () => {
     for (const o of noPlayOutcomes) expect(o.playerHits).toBe(0);
   });
+
+  it('seeds genuinely disperse the duels (effective sample size, not one duel ×24)', () => {
+    // The pre-fix harness produced 25.8s ×23 + 25.9s ×1 (ESS ≈ 1): the seeded rng had almost
+    // no behavioral surface. The AI's seeded recover jitter (AI_RECOVER_JITTER_FRAC) makes
+    // each seed a genuinely different trajectory — most seeds must yield distinct durations.
+    const distinctGood = new Set(goodOutcomes.map((o) => o.seconds)).size;
+    const distinctNoPlay = new Set(noPlayOutcomes.map((o) => o.seconds)).size;
+    expect(distinctGood).toBeGreaterThanOrEqual(SEEDS.length / 2); // measured: 22–24 of 24
+    expect(distinctNoPlay).toBeGreaterThanOrEqual(SEEDS.length / 2); // measured: 23 of 24
+  });
 });
 
 // ── chaos battery (memory: chaos-test-everything) ────────────────────────────────────────────

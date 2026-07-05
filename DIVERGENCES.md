@@ -96,11 +96,52 @@ is logged here.
   invuln is cleared by any **first offensive act** (slash/stab/launch/chiPunch/projectile) —
   a superset of "first slash"; you attack, you lose protection.
 
-- **Player strikes now wind up `PLAYER_WINDUP_MS` (360 ms) before resolving.** Port of the
-  pre-port `playerWindupUntil = now + 360` (which only fed the AI's reaction check) into a
-  real sim windup: the strike damage lands when `windupMs` expires, not on gesture end.
-  This changes the M1 instant-hit feel and is what makes the AI's react-block/dodge and the
-  telegraph measures provable in core tests. Flagged for the main-loop feel pass.
+- **(SUPERSEDED by the M2 verification pass — see below) Player strikes wound up 360 ms.**
+  The original port set `PLAYER_WINDUP_MS = 360`, mischaracterizing the pre-port
+  `playerWindupUntil = now + 360` literal (which was set at stroke START and ONLY fed the
+  AI's reaction check — it never delayed damage). The adversarial review graded this
+  fidelity-critical: the drawn slash resolving INSTANTLY on gesture end is the original's
+  signature feel, and M1 matched it.
+
+- **(M2 verify-pass) Instant player slash restored: `PLAYER_WINDUP_MS = 0` + same-tick
+  resolution.** `Sim.step()` resolves zero-windup strikes on the tick they are queued
+  (step 5b), so gesture-end → blood is zero fixed ticks — the M1/original feel. The AI's
+  react-block/dodge signal moved to a held `strokeArmed` intent (true while the player is
+  mid-draw), restoring M1's reaction semantics (armed at stroke start) through the seam.
+  AI-side strikes still wind up `AI_TIERS[tier].telegraphMs` (Tell 13 unchanged). The
+  Normal duel was re-tuned for §3.10 (`ENEMY_BASE.hp` 100 → 150, INFERRED): measured
+  median 24.7 s over 24 seeds, win-rates unchanged (good-play 24/24, no-play 0/24).
+
+- **(M2 verify-pass) AI stance switches telegraph as `stanceFlash` before landing (§3.9).**
+  `trySwitchStance` on the opponent side now queues `pendingStanceMs =
+  AI_TIERS[tier].telegraphMs` (the smoke-bomb pattern): `telegraphStarted{stanceFlash}`
+  fires on commit, the switch + Focus cost apply on expiry, and the caret painter reads
+  `pendingStanceMs` — so telegraph-enter → stance-land ≥ telegraphMs is now a passing sim
+  test AND a readable tell in the build. The PLAYER's own switch stays instant (Tell 8).
+
+- **(M2 verify-pass) `blocked` events carry a `reason` (`block` | `invuln` | `iframes`).**
+  The armor-parry cue (spark + `playArmor`) was firing for spawn-invuln and smoke-i-frame
+  nulls too — a different cause presented with the parry read (Tell 28). The scene now
+  plays the full parry cue only for a true block pose; invulnerability nulls read as a
+  lighter spark-only beat. Flagged for the feel pass.
+
+- **(M2 verify-pass) Sim events carry their victim (`targetIndex` on `chiPunchLanded` and
+  `projectileHit`).** The scene had been re-deriving the chi-punch victim from post-damage
+  state (`findIndex(hp > 0)`), flinching the wrong puppet when the punch was a killing blow
+  in `?foes>=2` duels, and hardwiring player-kunai hits to `foes[0]`. The victim now
+  travels IN the event (the `hitLanded` contract) and `DuelScene` routes through
+  `targetPuppet` — no sim-targeting inference remains in the scene.
+
+- **(M2 verify-pass) Live-scene hit resolution is NOT replay-from-seed reproducible.**
+  `DuelScene` injects `limbsFor` = the render skeleton's CURRENT pose at sim positions, and
+  the pose advances on render frames (wall clock) — so the same `?seed=` + intent trace can
+  resolve limb hits slightly differently at different framerates (measured: 60 vs 30 fps
+  diverge in cut points once a stroke lands mid-animation). This is deliberate M1-parity
+  (the blade cuts what is on screen); byte-determinism is the CORE sim's invariant under
+  fixture/absent `limbsFor` (all core tests + the cross-process trace). If replay support
+  is ever wanted, snapshot pose keyframes on the fixed tick inside the sim. The `limbsFor`
+  boundary also sanitizes shape-invalid limbs (untyped JS callers degrade to a whiff /
+  default capsule instead of a mid-tick TypeError).
 
 - **`DuelScene` is now render-only (the §1.C mandate landed).** All combat math — damage,
   Focus, Critical (+weapon-weight drain, 3× crit), stance triangle, spawn invuln, Smoke
@@ -113,10 +154,21 @@ is logged here.
   removed from the AI path). Sim rng seed comes from `?seed=` (dev) or `Date.now()` —
   wall-clock is allowed in `game/`, never in `core/`.
 
-- **`OpponentIntent.throwProjectile` is design-for-test.** No Duels footage shows the duel
-  opponent throwing kunai at this tier; the intent exists so the Stab+Deflect measure (Tell
-  10) is provable through the seam (ScriptedController throws, the stab pose swats). The AI
-  tiers may adopt it later; it is not reachable from the player's input map.
+- **`OpponentIntent.throwProjectile`: Normal+ AI tiers now throw kunai (M2 verify-pass).**
+  Originally design-for-test only (ScriptedController throws, the stab pose swats), which
+  left Tell 10's Stab+Deflect half unobservable in the running build. The AI now throws
+  through the seam when the player deliberately keeps range: `AI_TIERS[tier].kunaiChance`
+  per reaction window inside `AI_KUNAI_RANGE` (240–720 px), easy tier 0 (all INFERRED —
+  no Duels footage shows tier-1 kunai, so this is a DESIGN-FROM-LORE enablement in the
+  SHS1/SHS2 register where enemies do throw). §G scenario: back off with A → kunai flies →
+  stab (key 3 / down-stroke) swats it. The intent remains unbound on the player's input map.
+
+- **(M2 verify-pass) Seeded duels genuinely diverge: `AI_RECOVER_JITTER_FRAC` (0.35).** The
+  Tell 14 harness was degenerate (24 seeds → one duplicated duel; effective sample ≈ 1)
+  because the rng had almost no behavioral surface against deterministic policies. The AI
+  now rolls one seeded jitter per `recover` entry, scaling its FSM recover dwell ±35% — 24
+  seeds now produce 22–24 distinct durations, asserted by a harness-integrity test. The
+  sim-owned telegraph guarantee (windup ≥ telegraphMs) is untouched.
 
 - **Duel framing wiring (Tell 25).** The sim is frozen until `DuelIntro`'s FIGHT! lands
   (`onFight` = the unfreeze; spawn-invuln starts counting there), any click fast-forwards

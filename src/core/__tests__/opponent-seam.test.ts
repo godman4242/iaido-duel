@@ -80,13 +80,15 @@ describe('OpponentController seam (spec §C, §G.a)', () => {
     expect(sim.opponent.hp).toBe(100);
   });
 
-  it('the player strike lands only after PLAYER_WINDUP_MS (windup port)', () => {
+  it('the player strike resolves after PLAYER_WINDUP_MS — 0 ⇒ the SAME tick the gesture lands', () => {
+    // Fidelity contract (M1 / the original): the drawn slash is instant-on-gesture-end.
+    // If PLAYER_WINDUP_MS is ever tuned back above 0, this test re-measures automatically.
     const sim = new Sim(baseCfg(), new ScriptedController([whiff])); // foe clears its invuln
     const windupTicks = Math.ceil(PLAYER_WINDUP_MS / DT);
-    run(sim, windupTicks, { 0: slash }); // queued on tick 0, still winding up
-    expect(sim.opponent.hp).toBe(100);
-    run(sim, 2);
-    expect(sim.opponent.hp).toBe(88);
+    const evs = run(sim, windupTicks + 1, { 0: slash }); // queued on tick 0
+    expect(PLAYER_WINDUP_MS).toBe(0);
+    expect(evs.some((e) => e.ev.type === 'hitLanded' && e.tick === windupTicks)).toBe(true);
+    expect(sim.opponent.hp).toBe(88); // 100 - round(10 * 1.2)
   });
 
   it('the sim never needs the controller type — an empty controller drops in unchanged', () => {
@@ -117,6 +119,7 @@ describe('OpponentController seam (spec §C, §G.a)', () => {
     expect(first).toEqual([]); // no step ran, intent must NOT be lost
     const second = sim.advance(half); // accumulates to one full step
     expect(second.some((e) => e.type === 'slashStarted')).toBe(true);
-    expect(sim.player.pendingStrike?.verb).toBe('slash');
+    // zero windup ⇒ the surviving intent resolved on that step: the busy lock proves it ran
+    expect(sim.player.busyMs).toBeGreaterThan(0);
   });
 });

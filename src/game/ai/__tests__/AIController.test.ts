@@ -59,6 +59,7 @@ const view = (over: Partial<TelegraphView> = {}): TelegraphView => ({
   y: 480,
   windupMs: 0,
   pendingSmokeMs: 0,
+  pendingStanceMs: 0,
   blocking: false,
   ...over,
 });
@@ -82,6 +83,17 @@ describe('game/ai AIController — telegraph/pose painter (reads sim state, deci
     expect(gfx.fillPaths).toBe(1);
     painter.update(view({ windupMs: 300, blocking: true }), 16);
     expect(guards[guards.length - 1]).toBe('block');
+  });
+
+  it('REGRESSION (§3.9): a pending stance-flash telegraph paints the caret like any commit', () => {
+    // Before the fix, an AI stance switch applied instantly and NOTHING consumed the
+    // stanceFlash telegraph — the build showed no readable tell for it (finding §3.9).
+    const { gfx, guards, painter } = make();
+    painter.update(view({ pendingStanceMs: 520 }), 16);
+    expect(guards[guards.length - 1]).toBe('telegraph');
+    expect(gfx.fillPaths).toBe(1);
+    painter.update(view(), 16);
+    expect(guards[guards.length - 1]).toBe('none'); // clears when the switch lands
   });
 
   it('chaos: non-finite position suppresses the caret instead of painting NaN geometry', () => {

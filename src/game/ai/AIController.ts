@@ -16,6 +16,7 @@ export type TelegraphView = {
   y: number;
   windupMs: number; // > 0 ⇒ a strike telegraph is held (Tell 13)
   pendingSmokeMs: number; // > 0 ⇒ a smoke-bomb telegraph is held
+  pendingStanceMs: number; // > 0 ⇒ a stance-flash telegraph is held (§3.9)
   blocking: boolean; // held block pose (react-block)
 };
 
@@ -37,7 +38,8 @@ export class AIController {
   /** Mirror the sim's telegraph/block state onto the puppet pose + the pulsing caret. */
   update(view: TelegraphView, delta: number): void {
     this.tPulse += Number.isFinite(delta) && delta > 0 ? delta : 0;
-    const telegraphing = view.windupMs > 0 || view.pendingSmokeMs > 0;
+    const telegraphing =
+      view.windupMs > 0 || view.pendingSmokeMs > 0 || view.pendingStanceMs > 0;
     if (view.blocking === true) this.self.setGuard('block');
     else if (telegraphing) this.self.setGuard('telegraph');
     else this.self.setGuard('none');
