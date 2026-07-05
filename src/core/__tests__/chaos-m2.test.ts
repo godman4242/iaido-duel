@@ -72,10 +72,13 @@ describe('§4 chaos — sustained 120Hz feed never loses queued intents (intent-
     const evTypes: string[] = [];
     let fed = 0;
     for (let i = 0; i < 240; i++) {
-      // feed each intent ONCE, on an odd (no-step) frame — it must survive to the next step
+      // feed each intent ONCE, on an EVEN frame — those complete no fixed step (acc reaches
+      // exactly DT only on odd calls, since DT/2 + DT/2 === DT in binary FP), so the intent
+      // MUST survive the no-step advance() to be consumed by the next call's step. Feeding on
+      // odd frames would let same-call ingest→step consumption mask a drop-on-no-step bug.
       let intent: OpponentIntent = {};
-      if (i === 1) (intent = { switchStance: 'light' }), fed++;
-      if (i === 3) (intent = { smokeBomb: true }), fed++;
+      if (i === 0) (intent = { switchStance: 'light' }), fed++;
+      if (i === 2) (intent = { smokeBomb: true }), fed++;
       for (const ev of sim.advance(half, intent)) evTypes.push(ev.type);
     }
     expect(fed).toBe(2);
