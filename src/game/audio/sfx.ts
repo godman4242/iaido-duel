@@ -1,4 +1,26 @@
-// Synthesized combat SFX via the Web Audio API — no sampled assets.
+// Synthesized combat SFX via the Web Audio API — no sampled assets, ever (all audio is our
+// own synthesis; nothing is ripped from the original). Every synth number lives in
+// config/audio.ts (SFX_SYNTH / HEAVY_LIGHT_TONE / SFX_ENV_FLOOR) — this module is
+// literal-free (M2 config-purity paydown: the pre-M2 39 baseline literals moved to config).
+//
+// M2 four-way slash matrix (blueprint §3.14, Tell 28) — the integrator calls each on the
+// measured sim event (fire frames in config SFX_FIRE_FRAMES):
+//   playDraw(stance)   ← slashStarted   (stroke start — the unsheathe)
+//   playWhiff(stance)  ← whiffed        (stroke resolved, zero limb hits)
+//   playFlesh(stance)  ← hitLanded      (body hit)
+//   playArmor(stance)  ← blocked        (blocked/parried — the armor "tink")
+// Heavy vs light tonal weight (HEAVY_LIGHT_TONE): heavy = lower pitch, louder, longer.
+import {
+  SFX_SYNTH,
+  SFX_ENV_FLOOR,
+  HEAVY_LIGHT_TONE,
+  NEUTRAL_TONE,
+  type SfxCue,
+  type SlashSfx,
+  type ToneWeight,
+} from '../../config/audio';
+import type { StanceId } from '../../config/stances';
+
 let ctx: AudioContext | null = null;
 let muted = false;
 
@@ -24,6 +46,11 @@ export function toggleMuted(): boolean {
   return muted;
 }
 
+/** Stance → tonal weight; unknown/absent stances play neutral (hostile-input guard). */
+function toneOf(stance?: StanceId): ToneWeight {
+  return (stance && HEAVY_LIGHT_TONE[stance]) || NEUTRAL_TONE;
+}
+
 function noise(c: AudioContext, dur: number): AudioBufferSourceNode {
   const n = Math.floor(c.sampleRate * dur);
   const buf = c.createBuffer(1, n, c.sampleRate);
@@ -37,99 +64,116 @@ function noise(c: AudioContext, dur: number): AudioBufferSourceNode {
 function env(c: AudioContext, peak: number, attack: number, decay: number): GainNode {
   const g = c.createGain();
   const t = c.currentTime;
-  g.gain.setValueAtTime(0.0001, t);
+  g.gain.setValueAtTime(SFX_ENV_FLOOR, t);
   g.gain.exponentialRampToValueAtTime(peak, t + attack);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + attack + decay);
+  g.gain.exponentialRampToValueAtTime(SFX_ENV_FLOOR, t + attack + decay);
   return g;
 }
 
-/** A blade whoosh: band-passed noise sweeping upward. */
-export function playSlash(): void {
+/**
+ * Play one config cue through the three layer primitives (noise sweeps / tone sweeps /
+ * partial stacks), weighted by a ToneWeight: frequencies × freqScale, envelope peaks ×
+ * gainScale, decay/sweep/stop times × durScale (attack untouched — no click).
+ */
+function playCue(cue: SfxCue, w: ToneWeight = NEUTRAL_TONE): void {
   if (muted) return;
   try {
     const c = ac();
     const t = c.currentTime;
-    const src = noise(c, 0.2);
-    const bp = c.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.Q.value = 1.3;
-    bp.frequency.setValueAtTime(700, t);
-    bp.frequency.exponentialRampToValueAtTime(3600, t + 0.16);
-    const g = env(c, 0.22, 0.02, 0.16);
-    src.connect(bp).connect(g).connect(c.destination);
-    src.start(t);
-    src.stop(t + 0.22);
+    for (const L of cue.noise ?? []) {
+      const src = noise(c, L.durS * w.durScale);
+      const f = c.createBiquadFilter();
+      f.type = L.filter;
+      if (L.q !== undefined) f.Q.value = L.q;
+      f.frequency.setValueAtTime(L.freqFrom * w.freqScale, t);
+      if (L.freqTo !== undefined && L.sweepS !== undefined) {
+        f.frequency.exponentialRampToValueAtTime(L.freqTo * w.freqScale, t + L.sweepS * w.durScale);
+      }
+      const g = env(c, L.peak * w.gainScale, L.attackS, L.decayS * w.durScale);
+      src.connect(f).connect(g).connect(c.destination);
+      src.start(t);
+      src.stop(t + L.stopS * w.durScale);
+    }
+    for (const L of cue.tones ?? []) {
+      const o = c.createOscillator();
+      o.type = L.wave;
+      o.frequency.setValueAtTime(L.freqFrom * w.freqScale, t);
+      if (L.freqTo !== undefined && L.sweepS !== undefined) {
+        o.frequency.exponentialRampToValueAtTime(L.freqTo * w.freqScale, t + L.sweepS * w.durScale);
+      }
+      const g = env(c, L.peak * w.gainScale, L.attackS, L.decayS * w.durScale);
+      let head: AudioNode = o;
+      if (L.lowpassHz !== undefined) {
+        const lp = c.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.value = L.lowpassHz * w.freqScale;
+        head = o.connect(lp);
+      }
+      head.connect(g).connect(c.destination);
+      o.start(t);
+      o.stop(t + L.stopS * w.durScale);
+    }
+    for (const L of cue.partials ?? []) {
+      L.freqs.forEach((f0, i) => {
+        const o = c.createOscillator();
+        o.type = L.wave;
+        o.frequency.value = f0 * w.freqScale;
+        const g = env(c, L.peak * w.gainScale, L.attackS, L.decayS * w.durScale);
+        o.connect(g).connect(c.destination);
+        o.start(t + i * L.stepDelayS * w.durScale);
+        o.stop(t + L.stopS * w.durScale);
+      });
+    }
   } catch {
-    /* ignore */
+    /* audio unavailable — stay silent */
   }
 }
 
-/** A flesh/blade impact: low sine thud + a high noise crack. */
-export function playImpact(): void {
-  if (muted) return;
-  try {
-    const c = ac();
-    const t = c.currentTime;
-    const o = c.createOscillator();
-    o.type = 'sine';
-    o.frequency.setValueAtTime(170, t);
-    o.frequency.exponentialRampToValueAtTime(55, t + 0.13);
-    const g = env(c, 0.4, 0.005, 0.16);
-    o.connect(g).connect(c.destination);
-    o.start(t);
-    o.stop(t + 0.2);
+// ── four-way slash matrix (Tell 28) ────────────────────────────────────────────────────────
 
-    const src = noise(c, 0.09);
-    const hp = c.createBiquadFilter();
-    hp.type = 'highpass';
-    hp.frequency.value = 2200;
-    const g2 = env(c, 0.3, 0.004, 0.08);
-    src.connect(hp).connect(g2).connect(c.destination);
-    src.start(t);
-    src.stop(t + 0.1);
-  } catch {
-    /* ignore */
-  }
+/** Unsheathe "shing" — fire on `slashStarted` (SFX_FIRE_FRAMES.draw = strokeStart). */
+export function playDraw(stance?: StanceId): void {
+  playCue(SFX_SYNTH.draw, toneOf(stance));
+}
+
+/** Air-only miss whoosh — fire on `whiffed`. */
+export function playWhiff(stance?: StanceId): void {
+  playCue(SFX_SYNTH.whiff, toneOf(stance));
+}
+
+/** Flesh hit: low thud + high crack — fire on `hitLanded`. */
+export function playFlesh(stance?: StanceId): void {
+  playCue(SFX_SYNTH.flesh, toneOf(stance));
+}
+
+/** Armor-parry "tink" — fire on `blocked`. */
+export function playArmor(stance?: StanceId): void {
+  playCue(SFX_SYNTH.armor, toneOf(stance));
+}
+
+/** Matrix dispatcher for SFX_FIRE_FRAMES-driven wiring. */
+export function playSlashSfx(kind: SlashSfx, stance?: StanceId): void {
+  playCue(SFX_SYNTH[kind], toneOf(stance));
+}
+
+// ── legacy cues (M1 call sites in DuelScene keep working; sounds unchanged) ────────────────
+
+/** A blade whoosh: band-passed noise sweeping upward (the M1 swing sound). */
+export function playSlash(stance?: StanceId): void {
+  playCue(SFX_SYNTH.slash, toneOf(stance));
+}
+
+/** A flesh/blade impact — the M1 name for the flesh hit (same cue as playFlesh). */
+export function playImpact(stance?: StanceId): void {
+  playFlesh(stance);
 }
 
 /** A two-tone stance chime. */
 export function playStanceSwitch(): void {
-  if (muted) return;
-  try {
-    const c = ac();
-    const t = c.currentTime;
-    [880, 1320].forEach((f, i) => {
-      const o = c.createOscillator();
-      o.type = 'sine';
-      o.frequency.value = f;
-      const g = env(c, 0.12, 0.01, 0.38);
-      o.connect(g).connect(c.destination);
-      o.start(t + i * 0.02);
-      o.stop(t + 0.45);
-    });
-  } catch {
-    /* ignore */
-  }
+  playCue(SFX_SYNTH.stanceSwap);
 }
 
 /** A short pained grunt. */
 export function playGrunt(): void {
-  if (muted) return;
-  try {
-    const c = ac();
-    const t = c.currentTime;
-    const o = c.createOscillator();
-    o.type = 'sawtooth';
-    o.frequency.setValueAtTime(230, t);
-    o.frequency.exponentialRampToValueAtTime(105, t + 0.13);
-    const lp = c.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = 950;
-    const g = env(c, 0.2, 0.01, 0.15);
-    o.connect(lp).connect(g).connect(c.destination);
-    o.start(t);
-    o.stop(t + 0.2);
-  } catch {
-    /* ignore */
-  }
+  playCue(SFX_SYNTH.grunt);
 }

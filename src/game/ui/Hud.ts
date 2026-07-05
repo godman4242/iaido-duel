@@ -16,7 +16,19 @@ import {
   HUD_GLYPH,
   HUD_COMBAT_STYLE,
   HUD_FAKE,
+  SKILL_SLOTS,
+  SKILL_SLOT_RECTS,
+  HUD_CRIT_BAR,
+  HUD_SHUNPO_BAR,
+  STANCE_PORTRAIT_HIT,
+  HUD_STANCE_COLORS,
+  HUD_STANCE_MARK,
+  HUD_INTERACT,
+  HUD_SKILL_GLYPH,
+  type SkillId,
 } from '../../config/hud-extra';
+import { CRITICAL_MAX } from '../../config/combat';
+import { SHUNPO_MAX } from '../../config/combat-sim';
 import { Focus, FOCUS_MAX } from '../../core/focus';
 import { Fighter } from '../fighter/Fighter';
 import { NameLabel, NameLabelKind, NameLabelOpts } from './NameLabel';
@@ -27,6 +39,30 @@ export type HudMode = 'explore' | 'combat';
 
 /** Legacy wiring (DuelScene): the HUD pulls HP/Chi/stance from these every frame. */
 type HudOpts = { player: Fighter; enemy: Fighter; focus: Focus };
+
+/** Per-slot visual state, index-aligned with SKILL_SLOTS (data passed in — sim is authority). */
+export type HudSkillView = { enabled: boolean; cooldownFrac: number };
+
+/**
+ * Polled duel snapshot (M2 port contract: meters are polled state, not events).
+ * The integrator maps `sim.player` fields into this each frame via setDuelSource;
+ * maxes for focus/critical/shunpo are the config caps (FOCUS/CRITICAL/SHUNPO_MAX).
+ */
+export type HudDuelView = {
+  hp: number;
+  hpMax: number;
+  focus: number; // 0..FOCUS_MAX
+  critical: number; // 0..CRITICAL_MAX
+  critReady: boolean; // full bar ⇒ next landed hit is the 3× crit (Tell 7 glow)
+  shunpo: number; // 0..SHUNPO_MAX
+  shunpoActive: boolean;
+  stance: string;
+  stanceLocked: boolean; // renders the red CANNOT CHANGE STANCE caps
+  combo: number;
+  skills?: readonly HudSkillView[]; // omitted ⇒ all slots ready
+};
+
+export type SkillSlotHandler = (id: SkillId, slot: number) => void;
 
 type TextOpts = {
   family?: string;
@@ -66,7 +102,20 @@ export class Hud {
   private buffText: Phaser.GameObjects.Text;
   private comboText: Phaser.GameObjects.Text;
   private comboLabel: Phaser.GameObjects.Text;
+  private critLabel: Phaser.GameObjects.Text;
   private lastCombo = 0;
+
+  // M2 combat pieces (§3.8 + 23*): duel poll-source, callbacks, interactive state.
+  private duelSource: (() => HudDuelView) | null = null;
+  private stanceSwapCb: (() => void) | null = null;
+  private skillSlotCb: SkillSlotHandler | null = null;
+  private skillViews: readonly HudSkillView[] | null = null;
+  private zones: Phaser.GameObjects.Zone[] = [];
+  private portraitHover = false;
+  private slotHover = -1;
+  private portraitFlashUntil = 0;
+  private slotFlashUntil: number[] = SKILL_SLOTS.map(() => 0);
+  private lastStanceDrawn: string | null = null;
 
   private data = {
     hpCur: HUD_FAKE.hpCur as number,
@@ -76,6 +125,10 @@ export class Hud {
     stance: HUD_FAKE.stance as string,
     stanceLocked: false,
     crit: false,
+    critCur: 0,
+    critReady: false,
+    shunpoCur: SHUNPO_MAX as number, // meter starts full (sim contract)
+    shunpoActive: false,
     combo: 0,
     coins: HUD_FAKE.coins as number,
     gold: HUD_FAKE.gold as number,
@@ -148,6 +201,15 @@ export class Hud {
       FONT_SIZE.comboLabel,
       { color: HUD_COL.white, ox: HALF, stroke: TEXT_OUTLINE.body, bold: true },
     ).setVisible(false);
+    this.critLabel = this.mkText(
+      HUD_CRIT_BAR.x + HUD_CRIT_BAR.w + HUD_CRIT_BAR.labelDx,
+      HUD_CRIT_BAR.y + HUD_CRIT_BAR.h * HALF,
+      'CRITICAL',
+      HUD_TEXT.small,
+      { color: COL.nameGold, oy: HALF, stroke: TEXT_OUTLINE.body, bold: true },
+    ).setVisible(false);
+
+    this.buildInteractiveZones();
 
     // Legacy DuelScene wiring: combat mode + YOU/RONIN floating labels (§3 colors).
     if (opts) {
@@ -166,6 +228,48 @@ export class Hud {
       this.mode = mode;
       this.dirty = true;
     }
+  }
+
+  /**
+   * Duel poll-source (sim port contract: meters are polled, not evented). When set it
+   * overrides the legacy Fighter/Focus wiring; pass null to detach. The integrator maps
+   * sim.player into a HudDuelView each frame.
+   */
+  setDuelSource(get: (() => HudDuelView) | null): this {
+    this.duelSource = get;
+    return this;
+  }
+
+  /** Stance-swap request handler (portrait click; integrator also routes Space here — Tell 8/23*). */
+  onStanceSwap(cb: (() => void) | null): this {
+    this.stanceSwapCb = cb;
+    return this;
+  }
+
+  /** Skill-slot handler — receives the config-mapped skill id (measure: press 1 → 'chiPunch'). */
+  onSkillSlot(cb: SkillSlotHandler | null): this {
+    this.skillSlotCb = cb;
+    return this;
+  }
+
+  /** One shared press path for portrait click AND the Space key: flash + callback. */
+  requestStanceSwap(): void {
+    this.portraitFlashUntil = this.now() + HUD_INTERACT.pressFlashMs;
+    this.stanceSwapCb?.();
+  }
+
+  /**
+   * Fire skill slot 1..N (HUD click or keys 1/2/3 — the integrator's key handler calls
+   * this so both inputs share one path). Returns the config skill id, or null on a
+   * hostile/invalid slot (non-integer, out of range) — never throws.
+   */
+  fireSkillSlot(slot: number): SkillId | null {
+    if (!Number.isInteger(slot) || slot < 1 || slot > SKILL_SLOTS.length) return null;
+    const idx = slot - 1;
+    this.slotFlashUntil[idx] = this.now() + HUD_INTERACT.pressFlashMs;
+    const id = SKILL_SLOTS[idx].id;
+    this.skillSlotCb?.(id, slot);
+    return id;
   }
 
   setHp(cur: number, max: number): void {
@@ -244,7 +348,13 @@ export class Hud {
   /** Call once per frame. `comboCount` kept for the legacy DuelScene call signature. */
   update(comboCount?: number): void {
     if (comboCount !== undefined) this.data.combo = comboCount;
-    this.syncLegacy();
+    if (this.duelSource) this.syncDuel(this.duelSource());
+    else this.syncLegacy();
+    // stance changes retint the portrait rim/tab, which live in the static chrome
+    if (this.data.stance !== this.lastStanceDrawn) {
+      this.lastStanceDrawn = this.data.stance;
+      this.dirty = true;
+    }
     if (this.dirty) this.rebuild();
     this.drawDynamic();
     for (const l of this.labels) l.update();
@@ -262,10 +372,16 @@ export class Hud {
       this.buffText,
       this.comboText,
       this.comboLabel,
+      this.critLabel,
     ])
       t.destroy();
+    for (const z of this.zones) z.destroy();
+    this.zones = [];
     for (const l of this.labels) l.destroy();
     this.labels = [];
+    this.duelSource = null;
+    this.stanceSwapCb = null;
+    this.skillSlotCb = null;
   }
 
   // ——————————————————————————————————————————— per-frame layer —————
@@ -281,6 +397,24 @@ export class Hud {
     this.data.stance = player.stanceId;
     this.data.stanceLocked = !focus.canSwitch();
     this.data.crit = focus.isCrit();
+  }
+
+  /** Sim-port mode: mirror the polled duel snapshot; hostile values are neutralized. */
+  private syncDuel(v: HudDuelView): void {
+    const d = this.data;
+    d.hpCur = v.hp;
+    d.hpMax = v.hpMax;
+    d.chiCur = v.focus;
+    d.chiMax = FOCUS_MAX;
+    d.critCur = v.critical;
+    d.critReady = v.critReady === true;
+    d.shunpoCur = v.shunpo;
+    d.shunpoActive = v.shunpoActive === true;
+    d.stance = typeof v.stance === 'string' ? v.stance : '';
+    d.stanceLocked = v.stanceLocked === true;
+    d.crit = d.critReady; // legacy ⚡ affordance now follows the Critical meter
+    if (Number.isFinite(v.combo)) d.combo = v.combo;
+    this.skillViews = v.skills ?? null;
   }
 
   private drawDynamic(): void {
@@ -299,9 +433,11 @@ export class Hud {
     );
     this.hpText.setText(`${Math.round(d.hpCur)} / ${Math.round(d.hpMax)}`);
     this.chiText.setText(`${Math.round(d.chiCur)} / ${Math.round(d.chiMax)}`);
-    this.stanceText.setText(`${d.stance.toUpperCase()} STANCE${d.crit ? '  ⚡' : ''}`);
+    this.stanceText.setText(`${String(d.stance ?? '').toUpperCase()} STANCE${d.crit ? '  ⚡' : ''}`);
     this.statusText.setVisible(this.mode === 'combat' && d.stanceLocked);
     this.buffText.setVisible(this.mode === 'combat' && d.damageBuff !== null);
+    this.critLabel.setVisible(this.mode === 'combat');
+    if (this.mode === 'combat') this.drawCombatMeters();
 
     // combat combo counter (§4/§6): big red brush numeral, pulses when it climbs
     const showCombo = this.mode === 'combat' && d.combo >= 2;
@@ -319,8 +455,130 @@ export class Hud {
     this.lastCombo = d.combo;
   }
 
+  /** Combat-only layer: Critical + Shunpo meters and the interactive overlays (§3.8/23*). */
+  private drawCombatMeters(): void {
+    const d = this.data;
+    const g = this.dyn;
+    const t = this.now();
+
+    // Critical bar (Tell 7): gold fill; near-white + pulsing gold ring once crit-ready.
+    const cb = HUD_CRIT_BAR;
+    this.bar(g, cb.x, cb.y, cb.w, cb.h, this.frac(d.critCur, CRITICAL_MAX), d.critReady ? cb.readyFill : cb.fill);
+    if (d.critReady) {
+      const ph = (Math.sin((t / cb.readyPulseMs) * Math.PI * 2) + 1) * HALF;
+      g.lineStyle(HUD_INTERACT.ringW, cb.glowColor, cb.glowAlphaMin + (cb.glowAlphaMax - cb.glowAlphaMin) * ph).strokeRect(
+        cb.x - cb.glowPad,
+        cb.y - cb.glowPad,
+        cb.w + cb.glowPad * 2,
+        cb.h + cb.glowPad * 2,
+      );
+    }
+
+    // Shunpo power strip (Tell 16): teal, brighter while the slow-mo burst is active.
+    const sb = HUD_SHUNPO_BAR;
+    this.bar(g, sb.x, sb.y, sb.w, sb.h, this.frac(d.shunpoCur, SHUNPO_MAX), d.shunpoActive ? sb.activeFill : sb.fill);
+
+    // Skill slots: cooldown wipe (top-down), disabled dim, hover/press rings.
+    const pad = HUD_BARS.pad;
+    SKILL_SLOT_RECTS.forEach((r, i) => {
+      const sv = this.skillViews?.[i];
+      const cd = this.frac(sv ? sv.cooldownFrac : 0, 1);
+      if (cd > 0)
+        g.fillStyle(COL.vignetteBlack, HUD_INTERACT.cooldownAlpha).fillRect(
+          r.x + pad,
+          r.y + pad,
+          r.w - pad * 2,
+          (r.h - pad * 2) * cd,
+        );
+      if (sv && sv.enabled !== true)
+        g.fillStyle(COL.vignetteBlack, HUD_INTERACT.disabledAlpha).fillRect(
+          r.x + pad,
+          r.y + pad,
+          r.w - pad * 2,
+          r.h - pad * 2,
+        );
+      const pressed = t < this.slotFlashUntil[i];
+      if (pressed || this.slotHover === i)
+        g.lineStyle(
+          HUD_INTERACT.ringW,
+          COL.goldTrim,
+          pressed ? HUD_INTERACT.pressAlpha : HUD_INTERACT.hoverAlpha,
+        ).strokeRoundedRect(
+          r.x - HUD_INTERACT.ringPad,
+          r.y - HUD_INTERACT.ringPad,
+          r.w + HUD_INTERACT.ringPad * 2,
+          r.h + HUD_INTERACT.ringPad * 2,
+          HUD_COMBAT_STYLE.slotRadius,
+        );
+    });
+
+    // Portrait hover/press ring — the click-to-swap affordance (Tell 8/23*).
+    const hz = STANCE_PORTRAIT_HIT;
+    const pPressed = t < this.portraitFlashUntil;
+    if (pPressed || this.portraitHover)
+      g.lineStyle(
+        HUD_INTERACT.ringW,
+        COL.goldTrim,
+        pPressed ? HUD_INTERACT.pressAlpha : HUD_INTERACT.hoverAlpha,
+      ).strokeRoundedRect(
+        hz.x - HUD_INTERACT.ringPad,
+        hz.y - HUD_INTERACT.ringPad,
+        hz.w + HUD_INTERACT.ringPad * 2,
+        hz.h + HUD_INTERACT.ringPad * 2,
+        HUD_CHROME.radius,
+      );
+  }
+
+  /** Clamped 0..1 fill fraction; NaN/Infinity/negative inputs collapse to 0 (chaos guard). */
   private frac(cur: number, max: number): number {
-    return max > 0 ? Math.max(0, Math.min(1, cur / max)) : 0;
+    const f = max > 0 ? cur / max : 0;
+    return Number.isFinite(f) ? Math.max(0, Math.min(1, f)) : 0;
+  }
+
+  /** Scene clock, hardened to a finite number (drives press flashes + the ready pulse). */
+  private now(): number {
+    const t = this.scene.time?.now;
+    return typeof t === 'number' && Number.isFinite(t) ? t : 0;
+  }
+
+  // ————————————————————————————————— interactive zones (combat) —————
+
+  /** Portrait click-to-swap + 3 clickable skill slots; handlers only fire in combat mode. */
+  private buildInteractiveZones(): void {
+    this.addZone(
+      STANCE_PORTRAIT_HIT,
+      (h) => (this.portraitHover = h),
+      () => this.requestStanceSwap(),
+    );
+    SKILL_SLOT_RECTS.forEach((r, i) => {
+      this.addZone(
+        r,
+        (h) => (this.slotHover = h ? i : this.slotHover === i ? -1 : this.slotHover),
+        () => this.fireSkillSlot(i + 1),
+      );
+    });
+  }
+
+  private addZone(
+    r: { x: number; y: number; w: number; h: number },
+    hover: (over: boolean) => void,
+    down: () => void,
+  ): void {
+    const z = this.scene.add
+      .zone(r.x, r.y, r.w, r.h)
+      .setOrigin(0, 0)
+      .setInteractive({ useHandCursor: true });
+    z.on('pointerover', () => hover(true));
+    z.on('pointerout', () => hover(false));
+    z.on(
+      'pointerdown',
+      (_p: unknown, _lx: unknown, _ly: unknown, ev?: { stopPropagation?: () => void }) => {
+        if (this.mode !== 'combat') return;
+        ev?.stopPropagation?.(); // keep HUD clicks from also starting a slash stroke
+        down();
+      },
+    );
+    this.zones.push(z);
   }
 
   // ——————————————————————————————————————— static chrome rebuild —————
@@ -458,6 +716,25 @@ export class Hud {
       p.w - b.inset * 2,
       p.h - b.inset * 2,
       HUD_CHROME.radius - HUD_BARS.pad,
+    );
+    // stance identity (Tell 8/23*): colored inner rim + bottom tab — the clickable
+    // portrait visibly reflects the current stance (light/balanced/heavy coding).
+    const sc =
+      (HUD_STANCE_COLORS as Record<string, number>)[String(this.data.stance ?? '').toLowerCase()] ??
+      COL.goldTrim;
+    g.lineStyle(HUD_STANCE_MARK.rimW, sc, HUD_STANCE_MARK.rimAlpha).strokeRoundedRect(
+      p.x + b.inset,
+      p.y + b.inset,
+      p.w - b.inset * 2,
+      p.h - b.inset * 2,
+      HUD_CHROME.radius - HUD_BARS.pad,
+    );
+    g.fillStyle(sc, HUD_STANCE_MARK.tabAlpha).fillRoundedRect(
+      p.x + b.inset,
+      p.y + p.h - b.inset - HUD_STANCE_MARK.tabH,
+      p.w - b.inset * 2,
+      HUD_STANCE_MARK.tabH,
+      HUD_STANCE_MARK.tabH * HALF,
     );
   }
 
@@ -885,34 +1162,66 @@ export class Hud {
 
   // ————— combat: bottom-right skill slots + flee arrow —————
 
+  /** 3 numbered slots (§6): geometry + key hints + skill ids all from SKILL_SLOTS config. */
   private drawSkillSlots(): void {
     const g = this.chrome;
-    const ss = HUD_COMBAT.skillSlots;
     const cs = HUD_COMBAT_STYLE;
-    for (let i = 0; i < ss.count; i++) {
-      const x = ss.endX - (ss.count - i) * ss.size - (ss.count - 1 - i) * ss.gap;
-      g.fillStyle(HUD_COL.slotFill, 1).fillRoundedRect(x, ss.y, ss.size, ss.size, cs.slotRadius);
+    SKILL_SLOT_RECTS.forEach((r, i) => {
+      g.fillStyle(HUD_COL.slotFill, 1).fillRoundedRect(r.x, r.y, r.w, r.h, cs.slotRadius);
       g.fillStyle(HUD_COL.slotShade, 1).fillRoundedRect(
-        x + HUD_BARS.pad,
-        ss.y + HUD_BARS.pad,
-        ss.size - HUD_BARS.pad * 2,
-        ss.size - HUD_BARS.pad * 2,
+        r.x + HUD_BARS.pad,
+        r.y + HUD_BARS.pad,
+        r.w - HUD_BARS.pad * 2,
+        r.h - HUD_BARS.pad * 2,
         cs.slotRadius - HUD_BARS.pad,
       );
       g.lineStyle(HUD_GLYPH.slotRingW, HUD_COL.slotRing, 1).strokeRoundedRect(
-        x,
-        ss.y,
-        ss.size,
-        ss.size,
+        r.x,
+        r.y,
+        r.w,
+        r.h,
         cs.slotRadius,
       );
-      this.chromeText(x + ss.size, ss.y - cs.slotNumDy, String(i + 1), HUD_TEXT.slotNumber, {
+      this.skillGlyph(g, SKILL_SLOTS[i].id, r.x + r.w * HALF, r.y + r.h * HALF);
+      this.chromeText(r.x + r.w, r.y - cs.slotNumDy, SKILL_SLOTS[i].key, HUD_TEXT.slotNumber, {
         color: COL.nameGold,
         ox: 1,
         oy: 1,
         stroke: TEXT_OUTLINE.body,
         bold: true,
       });
+    });
+  }
+
+  /** Own-expression vector icons per skill id (chi burst / smoke puff / downward stab). */
+  private skillGlyph(g: Phaser.GameObjects.Graphics, id: SkillId, cx: number, cy: number): void {
+    const gl = HUD_SKILL_GLYPH;
+    switch (id) {
+      case 'chiPunch':
+        g.fillStyle(gl.chiColor, gl.alpha).fillCircle(cx, cy, gl.chiCoreR);
+        g.lineStyle(HUD_INTERACT.ringW, gl.chiColor, gl.alpha * HALF).strokeCircle(cx, cy, gl.chiRingR);
+        break;
+      case 'smokeBomb':
+        g.fillStyle(gl.smokeColor, gl.alpha);
+        g.fillCircle(cx - gl.puffDx, cy + gl.puffDy * HALF, gl.puffR);
+        g.fillCircle(cx + gl.puffDx, cy + gl.puffDy * HALF, gl.puffR);
+        g.fillCircle(cx, cy - gl.puffDy, gl.puffR);
+        break;
+      default: // 'stab' — downward blade over a gold crossguard
+        g.fillStyle(gl.stabColor, gl.alpha).fillTriangle(
+          cx - gl.bladeW * HALF,
+          cy - gl.bladeH * HALF,
+          cx + gl.bladeW * HALF,
+          cy - gl.bladeH * HALF,
+          cx,
+          cy + gl.bladeH * HALF,
+        );
+        g.fillStyle(gl.guardColor, gl.alpha).fillRect(
+          cx - gl.guardW * HALF,
+          cy - gl.bladeH * HALF - gl.guardH,
+          gl.guardW,
+          gl.guardH,
+        );
     }
   }
 

@@ -1,112 +1,64 @@
-import Phaser from 'phaser';
-import { AIState, AIParams, nextAIState } from '../../core/ai';
+import type Phaser from 'phaser';
 import { COL } from '../../palette';
-import { AI_TIERS, AI_APPROACH_RANGE, AI_STRIKE_RANGE, ENEMY_SPEED } from '../../config/ai';
-import { Fighter } from '../fighter/Fighter';
+import type { Fighter } from '../fighter/Fighter';
 
-export type AIControllerOpts = {
-  self: Fighter;
-  target: Fighter;
-  /** Resolve the enemy's strike against the player. Called once when the attack lands. */
-  onAttack: () => void;
-  /** True while the player is mid-slash (the AI's cue to block/dodge). */
-  isTargetWindup: () => boolean;
-  params?: Partial<AIParams>;
+/**
+ * M2 port: the AI's DECISIONS moved behind the seam (core/AISeamController — FSM + seeded
+ * rng emitting OpponentIntent through core/Sim). This class is now only the render half:
+ * a telegraph-caret / guard-pose painter that READS the ronin's sim state every frame
+ * (blueprint §1.C: DuelScene renders sim state; the port-contract inventory names this
+ * exact shrink). It never moves the fighter, never rolls rng, never deals damage.
+ */
+
+/** The slice of the ronin's FighterSimState the painter reads (structural, read-only). */
+export type TelegraphView = {
+  x: number;
+  y: number;
+  windupMs: number; // > 0 ⇒ a strike telegraph is held (Tell 13)
+  pendingSmokeMs: number; // > 0 ⇒ a smoke-bomb telegraph is held
+  blocking: boolean; // held block pose (react-block)
 };
 
-/** Drives the enemy Fighter from the pure AI state machine: approach → telegraph → attack, with reactions. */
+/** The puppet slice the painter drives (structural — Fighter satisfies it). */
+export type GuardPuppet = Pick<Fighter, 'setGuard'>;
+
 export class AIController {
-  private state: AIState = 'idle';
-  private tInState = 0;
-  private params: AIParams;
   private tell: Phaser.GameObjects.Graphics;
+  private tPulse = 0;
 
   constructor(
-    private scene: Phaser.Scene,
-    private opts: AIControllerOpts,
+    scene: Phaser.Scene,
+    private self: GuardPuppet,
   ) {
-    this.params = {
-      approachRange: AI_APPROACH_RANGE,
-      strikeRange: AI_STRIKE_RANGE,
-      reactBlockChance: AI_TIERS.normal.reactBlockChance,
-      reactDodgeChance: AI_TIERS.normal.reactDodgeChance,
-      ...opts.params,
-    };
     this.tell = scene.add.graphics();
     this.tell.setDepth(60);
   }
 
-  stateName(): AIState {
-    return this.state;
+  /** Mirror the sim's telegraph/block state onto the puppet pose + the pulsing caret. */
+  update(view: TelegraphView, delta: number): void {
+    this.tPulse += Number.isFinite(delta) && delta > 0 ? delta : 0;
+    const telegraphing = view.windupMs > 0 || view.pendingSmokeMs > 0;
+    if (view.blocking === true) this.self.setGuard('block');
+    else if (telegraphing) this.self.setGuard('telegraph');
+    else this.self.setGuard('none');
+    this.drawTell(view, telegraphing);
   }
 
-  update(delta: number) {
-    const { self, target } = this.opts;
-    this.tInState += delta;
-
-    const distance = Math.abs(self.x - target.x);
-    const windup = this.opts.isTargetWindup();
-    const next = nextAIState(
-      this.state,
-      this.tInState,
-      { distance, playerAttacking: windup, playerWindup: windup, selfRecovering: this.state === 'recover', rng: Math.random() },
-      this.params,
-    );
-    if (next !== this.state) this.enter(next);
-
-    // continuous per-state behaviour
-    self.facing = target.x >= self.x ? 1 : -1;
-    self.scaleX = self.facing;
-    if (this.state === 'approach' && distance > this.params.strikeRange) {
-      self.x += -self.facing * 0 + Math.sign(target.x - self.x) * ENEMY_SPEED * delta;
-    }
-    this.drawTell();
+  destroy(): void {
+    this.tell.destroy();
   }
 
-  private enter(state: AIState) {
-    const { self } = this.opts;
-    // leaving a state: clear its effects
-    self.blocking = false;
-    self.setGuard('none');
-    this.state = state;
-    this.tInState = 0;
-
-    switch (state) {
-      case 'telegraph':
-        self.setGuard('telegraph');
-        break;
-      case 'attack':
-        self.slash();
-        this.opts.onAttack();
-        break;
-      case 'block':
-        self.blocking = true;
-        self.setGuard('block');
-        break;
-      case 'dodge': {
-        const back = -self.facing * 70;
-        this.scene.tweens.add({ targets: self, x: self.x + back, duration: 200, yoyo: true, ease: 'Quad.easeOut' });
-        break;
-      }
-      case 'recover':
-      case 'idle':
-      case 'approach':
-        break;
-    }
-  }
-
-  private drawTell() {
+  /** A red caret above the ronin, pulsing while a committing action is telegraphed. */
+  private drawTell(view: TelegraphView, telegraphing: boolean): void {
     this.tell.clear();
-    if (this.state !== 'telegraph') return;
-    const { self } = this.opts;
-    // a red caret above the enemy, pulsing with the wind-up
-    const pulse = 0.5 + 0.5 * Math.sin(this.tInState / 50);
-    const y = self.y - 150;
+    if (!telegraphing || !Number.isFinite(view.x) || !Number.isFinite(view.y)) return;
+    const pulse = 0.5 + 0.5 * Math.sin(this.tPulse / 50);
+    const y = view.y - 150;
     this.tell.fillStyle(COL.blood, 0.5 + 0.5 * pulse);
     this.tell.beginPath();
-    this.tell.moveTo(self.x - 10, y);
-    this.tell.lineTo(self.x + 10, y);
-    this.tell.lineTo(self.x, y + 14);
+    this.tell.moveTo(view.x - 10, y);
+    this.tell.lineTo(view.x + 10, y);
+    this.tell.lineTo(view.x, y + 14);
     this.tell.closePath();
     this.tell.fillPath();
   }

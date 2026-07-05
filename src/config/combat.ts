@@ -1,4 +1,5 @@
 // config/combat.ts — combat-core tunables (spec §A.1 + damage formula §A.1).
+import type { StanceId } from './stances';
 
 // CONTRACT — critical multiplier is 3× (spec §A.1). The previous build used 1.3× in
 // core/slash.ts; that is the documented divergence now fixed (see DIVERGENCES.md).
@@ -20,6 +21,10 @@ export const HEAVY_DEF_PENALTY = 0.2;
 // INFERRED — defense coefficient in the (1 - Defense*DEF_K) damage term (spec §A.1), clamp final ≥ 1.
 export const DEF_K = 0.01;
 
+// CONTRACT (structure) — spec §A.1 damage formula note: "clamp final ≥ 1". A landed hit always
+// deals at least this much, no matter how large Defense gets (M2 wires the defense term).
+export const DAMAGE_FLOOR = 1;
+
 // CONTRACT — spawn invulnerability: 5s or until first slash; character blinks (spec §A.1).
 export const SPAWN_INVULN_S = 5;
 
@@ -29,7 +34,30 @@ export const CHI_PUNCH_DMG_L1 = 10;
 // Focus meter — INFERRED (from existing build; spec §A.1 tunable by calibration).
 export const FOCUS_MAX = 100;
 export const FOCUS_SWITCH_COST = 34; // Focus spent to change stance
-export const FOCUS_CRIT_THRESHOLD = 80; // Focus at/above which the next hit is a crit
+export const FOCUS_CRIT_THRESHOLD = 80; // legacy M0 crit-ready (M2's Critical meter — core/critical.ts — owns crit-ready now)
+
+// Focus economy — INFERRED (M2 port of DuelScene literals; spec §C "Focus bar").
+export const FOCUS_START = 50; // Focus at duel spawn (was DuelScene's gain(50))
+export const FOCUS_GAIN_HIT = 16; // Focus gained per landed slash
+export const FOCUS_GAIN_PER_SEVER = 10; // extra Focus per limb severed by that slash
+export const FOCUS_GAIN_SPECIAL = 14; // Focus gained per landed special (launch/stab)
+
+// ── Critical meter (spec §C "Meters/systems", Tell 7; M2 blueprint §3.1) ────────────────────
+// Fills passively; drains per swing scaled by weapon weight (heavier = bigger drain); full →
+// the NEXT landed hit is the CRIT_MULT (3×) crit, then the bar resets. Patch behavior: fills
+// slightly slower and a stance switch also deducts. All INFERRED seeds (calibration-tunable).
+export const CRITICAL_MAX = 100; // bar capacity; full = crit-ready
+export const CRITICAL_FILL_PER_S = 8; // passive fill per second ("fills slightly slower" — patch pacing)
+export const CRITICAL_FILL_PER_MS = CRITICAL_FILL_PER_S / 1000; // derived — per-ms rate for the fixed tick
+export const CRITICAL_SWING_DRAIN_BASE = 6; // drain per swing at weapon weight 1.0
+export const CRITICAL_STANCE_SWITCH_DRAIN = 20; // patch behavior: changing stance also deducts
+// Per-stance weapon weight — scales the per-swing Critical drain (spec §C: "heavier = bigger
+// drain"); Heavy MUST stay strictly > Light (Tell 7 measure asserts the strict ordering).
+export const WEAPON_WEIGHT: Record<StanceId, number> = {
+  light: 1.0,
+  balanced: 1.5,
+  heavy: 2.5,
+};
 
 // INFERRED — an up-stroke with |dy| ≥ this is a launch flick, not a plain jump (spec §D.1).
 export const LAUNCH_DY = 160;

@@ -1,50 +1,62 @@
 import Phaser from 'phaser';
 import { GAME_W, GAME_H } from '../../config';
-import { ARENA_MARGIN } from '../../config/layout';
 import { COL } from '../../palette';
 import { Fighter } from '../fighter/Fighter';
 import { GestureInput } from '../input/GestureInput';
 import { KillBeat } from './KillBeat';
 import { BladeTrail } from '../vfx/BladeTrail';
-import { STANCES, counterBonus, StanceId } from '../../core/stance';
-import { Focus } from '../../core/focus';
-import { resolveSlash, SlashInput, SlashResult } from '../../core/slash';
-import { DrawnStroke } from '../../core/DrawnStroke';
-import { jumpArcPoint } from '../../core/trajectory';
 import { Gore } from '../vfx/Gore';
 import { lootPop } from '../vfx/LootPop';
 import { FinisherFlash } from '../vfx/FinisherFlash';
+import { SmokePuff } from '../vfx/SmokePuff';
+import { ProjectileView } from '../vfx/ProjectileView';
+import { DeflectSpark } from '../vfx/DeflectSpark';
 import { Hud } from '../ui/Hud';
 import { AIController } from '../ai/AIController';
 import { Biome, createBiome } from '../background/createBiome';
 import { Letterbox } from '../chrome/Letterbox';
+import { DuelIntro } from './DuelIntro';
+import { DuelResult } from './DuelResult';
 import { SCENE_BIOMES, DUEL_SCENE } from '../../config/scenes-extra';
-import { playSlash, playImpact, playStanceSwitch, playGrunt, resumeAudio, toggleMuted } from '../audio/sfx';
-import { Combo } from '../../core/combo';
-import { SLASH_FRAMES, FIXED_DT_MS } from '../../config/timing';
+import { SPAWN_BLINK, CRIT_FLASH } from '../../config/fx-extra';
+import { BLOOD_COUNT, BLOOD_COUNT_SEVERED, MULTI_FOE_SPACING } from '../../config/combat';
 import {
-  CRIT_MULT,
-  JUMP_APEX,
-  JUMP_MS,
-  LAUNCH_DMG_MULT,
-  LAUNCH_KNOCKUP,
-  STAB_DMG_MULT,
-  SPECIAL_MS,
-  BLOOD_COUNT,
-  BLOOD_COUNT_SEVERED,
-  MULTI_FOE_SPACING,
-  MULTI_FOE_MAX,
-} from '../../config/combat';
-import { Pt } from '../../core/vec';
+  makeRng,
+  SPAWN_X_FRAC,
+  PLAYER_BASE,
+  ENEMY_BASE,
+  DUMMY_BASE,
+  SIM_GROUND_Y,
+  STRIKE_TORSO_OFFSET,
+} from '../../config/combat-sim';
+import { KILL_REWARD } from '../../config/economy';
+import {
+  playDraw,
+  playWhiff,
+  playFlesh,
+  playArmor,
+  playStanceSwitch,
+  playGrunt,
+  resumeAudio,
+  toggleMuted,
+} from '../audio/sfx';
+import { Sim, type SimEvent, type FighterSimState, type Actor } from '../../core/Sim';
+import { AISeamController } from '../../core/AISeamController';
+import { worldLimbs } from '../fighter/Skeleton';
+import type { Limb } from '../../core/slash';
+import type { Pt } from '../../core/vec';
+import type { StanceId } from '../../core/stance';
+import {
+  IntentBuffer,
+  nextStance,
+  clampFoeCount,
+  parseTier,
+  parseSeed,
+  duelViewOf,
+} from './duel-wiring';
 
-const GROUND_Y = GAME_H - 96;
-const MOVE_SPEED = 0.28; // px per ms
-
-/** Per-stance slash recovery lock (frames → ms): Light short/fast, Heavy long/slow (Tell 6). */
-const slashRecoveryMs = (stance: StanceId): number => {
-  const f = SLASH_FRAMES[stance];
-  return (f.windup + f.active + f.recovery) * FIXED_DT_MS;
-};
+/** The sim's world ground line IS the scene's (config-derived — no local literal). */
+const GROUND_Y = SIM_GROUND_Y;
 
 const LIMB_COLOR: Record<string, number> = {
   armF: COL.haori,
@@ -54,24 +66,37 @@ const LIMB_COLOR: Record<string, number> = {
   head: COL.skin,
 };
 
+/**
+ * M2 (blueprint §1.C): DuelScene ONLY renders sim state and emits player intents.
+ * All combat math — damage, Focus, Critical, invuln/i-frames, stances, skills, projectiles,
+ * Shunpo, the kill latch — lives in core/Sim; the AI drives the SAME intent type through
+ * core/AISeamController. This scene: builds PlayerIntent from input, calls sim.advance(),
+ * drains SimEvents into FX/SFX, and copies sim state onto render puppets every frame.
+ */
 export class DuelScene extends Phaser.Scene {
-  private player!: Fighter;
-  private enemy!: Fighter; // the AI ronin (foes[0]) — the duel ends on its / the player's death
-  private foes: Fighter[] = []; // every damageable foe: the ronin + optional static sparring dummies
+  private sim!: Sim;
+  private controller!: AISeamController;
+  private player!: Fighter; // render puppet — sim.player is the authority
+  private enemy!: Fighter; // render puppet for foes[0], the AI ronin
+  private foes: Fighter[] = []; // puppets index-aligned with sim.foes
   private trail!: BladeTrail;
   private gore!: Gore;
   private hud!: Hud;
-  private ai!: AIController;
+  private aiPainter!: AIController;
   private biome!: Biome;
+  private smoke!: SmokePuff;
+  private kunai!: ProjectileView;
+  private sparkFx!: DeflectSpark;
+  private intro?: DuelIntro;
+  private result?: DuelResult;
+  private intents = new IntentBuffer();
+  private blinkTweens = new Map<number, Phaser.Tweens.Tween>();
+  private keys!: Record<'left' | 'right' | 'shift', Phaser.Input.Keyboard.Key>;
   private travelIn = false;
-  private playerFocus = new Focus();
-  private combo = new Combo();
-  private keys!: Record<'left' | 'right', Phaser.Input.Keyboard.Key>;
-  private busyUntil = 0;
-  private playerWindupUntil = 0;
-  private over = false;
-  private finishing = false;
-  private graceUntil = 0;
+  private combatStarted = false; // false until DuelIntro's FIGHT! lands (sim frozen)
+  private ended = false; // killBeat received — presentation owns the clocks from here
+  private strokeArmed = false; // a live drag that started while input was open
+  private appliedTimeScale = 1;
 
   constructor() {
     super('Duel');
@@ -88,29 +113,83 @@ export class DuelScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(DUEL_SCENE.bgColor);
     this.biome = createBiome(this, SCENE_BIOMES.duel, GROUND_Y);
 
-    this.player = new Fighter(this, GAME_W * 0.43, GROUND_Y, 1, { stance: 'balanced' });
-    this.enemy = new Fighter(this, GAME_W * 0.57, GROUND_Y, -1, {
-      stance: 'heavy',
+    // fresh per-duel state (the scene INSTANCE is reused across restarts — port-risk list)
+    this.combatStarted = false;
+    this.ended = false;
+    this.strokeArmed = false;
+    this.intents.clear();
+    this.blinkTweens.clear();
+    this.intro = undefined;
+    this.result = undefined;
+    this.appliedTimeScale = 1;
+    this.time.timeScale = 1;
+    this.tweens.timeScale = 1;
+    this.cameras.main.setZoom(1);
+
+    // ── the deterministic sim (fresh every create()) + the AI behind the seam ──────────
+    const params = new URLSearchParams(location.search);
+    const seed = parseSeed(params.get('seed'), Date.now());
+    const tier = parseTier(params.get('tier'));
+    const rng = makeRng(seed);
+    const foeCount = clampFoeCount(params.get('foes')); // ?foes=N sparring dummies (Tell 5)
+    const px = GAME_W * SPAWN_X_FRAC.player;
+    const ex = GAME_W * SPAWN_X_FRAC.opponent;
+    const foeSeeds = [{ x: ex, ...ENEMY_BASE }];
+    for (let i = 1; i < foeCount; i++) foeSeeds.push({ x: ex + i * MULTI_FOE_SPACING, ...DUMMY_BASE });
+    this.controller = new AISeamController({ rng, tier, groundY: GROUND_Y });
+    this.sim = new Sim(
+      {
+        player: { x: px, ...PLAYER_BASE },
+        foes: foeSeeds,
+        rng,
+        tier,
+        groundY: GROUND_Y,
+        // posed render-skeleton capsules at SIM positions (sim = position authority)
+        limbsFor: (side, index): Limb[] => {
+          const simF = side === 'player' ? this.sim.player : this.sim.foes[index];
+          const puppet = side === 'player' ? this.player : this.foes[index];
+          if (!simF || !puppet) return [];
+          return worldLimbs(puppet.pose, { x: simF.x, y: simF.y }, simF.facing);
+        },
+      },
+      this.controller,
+    );
+
+    // ── render puppets (sim copies onto these every frame; they never write back) ──────
+    this.player = new Fighter(this, px, GROUND_Y, 1, { stance: PLAYER_BASE.stance });
+    this.enemy = new Fighter(this, ex, GROUND_Y, -1, {
+      stance: ENEMY_BASE.stance,
       skin: { haori: COL.haoriEnemy, haoriShade: COL.haoriEnemyShade },
-      atkPlusWeapon: 7,
     });
     this.foes = [this.enemy];
-    // ?foes=N adds static sparring dummies beside the ronin so one stroke can cross several foes
-    // (Tell 5 — HP damage, multi-foe, instakills none). Default 1 = the unchanged 1-v-1 AI duel.
-    const requested = Number(new URLSearchParams(location.search).get('foes')) || 1;
-    const extra = Math.min(MULTI_FOE_MAX, Math.max(1, requested)) - 1;
-    for (let i = 1; i <= extra; i++) {
-      const dummy = new Fighter(this, this.enemy.x + i * MULTI_FOE_SPACING, GROUND_Y, -1, {
-        stance: 'balanced',
-        skin: { haori: COL.haoriEnemy, haoriShade: COL.haoriEnemyShade },
-        atkPlusWeapon: 7,
-      });
-      this.foes.push(dummy);
+    for (let i = 1; i < foeCount; i++) {
+      this.foes.push(
+        new Fighter(this, ex + i * MULTI_FOE_SPACING, GROUND_Y, -1, {
+          stance: DUMMY_BASE.stance,
+          skin: { haori: COL.haoriEnemy, haoriShade: COL.haoriEnemyShade },
+        }),
+      );
     }
 
     this.trail = new BladeTrail(this, DUEL_SCENE.arcVariant);
     this.gore = new Gore(this, GROUND_Y); // ground-bound: pools + spatter sit on the arena floor
-    this.hud = new Hud(this, { player: this.player, enemy: this.enemy, focus: this.playerFocus });
+    this.smoke = new SmokePuff(this, GROUND_Y);
+    this.kunai = new ProjectileView(this, GROUND_Y);
+    this.sparkFx = new DeflectSpark(this);
+
+    // ── HUD: polled sim snapshot + interactive stance portrait / skill slots (Tell 8/12/23*) ──
+    this.hud = new Hud(this);
+    this.hud.setDuelSource(() => duelViewOf(this.sim.player, this.sim.over));
+    this.hud.onStanceSwap(() => {
+      if (this.canAct()) this.intents.queueStance(nextStance(this.sim.player.stance));
+    });
+    this.hud.onSkillSlot((_id, slot) => {
+      if (this.canAct()) this.intents.queueSkill(slot);
+    });
+    this.hud.attachNameLabel(this.player, 'YOU', 'player');
+    this.hud.attachNameLabel(this.enemy, 'RONIN', 'hostile', {
+      hp: () => (this.sim.opponent.hpMax > 0 ? this.sim.opponent.hp / this.sim.opponent.hpMax : 0),
+    });
 
     // Arriving from Town's travel pan: open under the black bars, then release them (tell #9).
     if (this.travelIn) {
@@ -121,60 +200,63 @@ export class DuelScene extends Phaser.Scene {
       // so without this an R-restart would replay the travel pan every time
       (this.sys.settings.data as { travelIn?: boolean }).travelIn = false;
     }
-    // reset Focus on restart (scene instance is reused)
-    this.playerFocus.value = 0;
-    this.playerFocus.gain(50); // start with enough Focus to switch once; builds from hits (tunable)
 
-    // spawn grace: both fighters invulnerable + blinking briefly at the start of the duel
-    this.over = false;
-    this.finishing = false;
-    this.combo.reset();
-    this.cameras.main.setZoom(1);
-    this.graceUntil = this.time.now + 1500;
-    for (const f of [this.player, ...this.foes]) {
-      this.tweens.add({ targets: f, alpha: 0.35, duration: 150, yoyo: true, repeat: 4 });
-    }
-
+    // ── input → intents (the seam's player half) ────────────────────────────────────────
     new GestureInput(this, {
       onStart: (p) => {
         resumeAudio();
+        if (!this.canAct()) return;
+        this.strokeArmed = true;
         this.trail.begin();
         this.trail.push(p);
-        this.playerWindupUntil = this.time.now + 360; // the AI can react to an incoming slash
       },
-      onMove: (p) => this.trail.push(p),
+      onMove: (p) => {
+        if (this.strokeArmed) this.trail.push(p);
+      },
       onEnd: (stroke) => {
+        if (!this.strokeArmed) return; // e.g. the click that skipped the intro
+        this.strokeArmed = false;
         this.trail.end();
-        this.handleGesture(stroke);
+        // verb travels WITH the path — ONE classifier decision (port contract)
+        this.intents.queueStroke(stroke.points, stroke.verb);
       },
     });
 
-    this.ai = new AIController(this, {
-      self: this.enemy,
-      target: this.player,
-      onAttack: () => this.enemyStrike(),
-      isTargetWindup: () => this.time.now < this.playerWindupUntil,
-    });
+    this.aiPainter = new AIController(this, this.enemy);
 
     const kb = this.input.keyboard!;
     this.keys = {
       left: kb.addKey(Phaser.Input.Keyboard.KeyCodes.A),
       right: kb.addKey(Phaser.Input.Keyboard.KeyCodes.D),
+      shift: kb.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT), // Shunpo hold (DIVERGENCES: SPACE is the stance swap)
     };
     kb.on('keydown-B', () => {
       Gore.reduced = !Gore.reduced;
     });
-    kb.on('keydown-SPACE', () => this.cycleStance());
+    kb.on('keydown-SPACE', () => {
+      if (this.canAct()) this.hud.requestStanceSwap(); // same path as the portrait click (Tell 8/23*)
+    });
+    // keys 1/2/3 share the HUD slot path (press flash + config-mapped skill id — Tell 12)
+    (['keydown-ONE', 'keydown-TWO', 'keydown-THREE'] as const).forEach((evName, i) => {
+      kb.on(evName, () => {
+        if (this.canAct()) this.hud.fireSkillSlot(i + 1);
+      });
+    });
     kb.on('keydown-R', () => this.scene.restart());
     kb.on('keydown-M', () => toggleMuted());
     kb.once('keydown', () => resumeAudio());
 
     this.add
-      .text(GAME_W / 2, 22, 'A/D move   ·   draw across to slash   ·   SPACE switch stance', {
-        fontFamily: 'monospace',
-        fontSize: '13px',
-        color: '#d8dbf1',
-      })
+      .text(
+        GAME_W / 2,
+        22,
+        'A/D move · draw to slash · SPACE stance · SHIFT slow-mo · 1/2/3 skills',
+        {
+          fontFamily: 'monospace',
+          fontSize: '13px',
+          color: '#d8dbf1',
+        },
+      )
       .setOrigin(0.5)
       .setAlpha(0.7);
 
@@ -190,81 +272,215 @@ export class DuelScene extends Phaser.Scene {
       .setAlpha(0.5)
       .setDepth(120);
 
+    // ── duel framing (Tell 25): VS splash → name banner → READY/FIGHT! → combat ─────────
+    this.intro = new DuelIntro(this, {
+      playerName: 'YOU',
+      opponentName: 'RONIN',
+      onFight: () => this.startCombat(), // the sim-unfreeze moment (s-framing contract)
+      onDone: () => {
+        this.intro = undefined;
+      },
+    });
+    // any click fast-forwards the intro (?scene=duel boots straight in, skippable)
+    this.input.on('pointerdown', () => {
+      if (!this.combatStarted) this.intro?.skip();
+    });
+
+    // restart-safety: kill overlay timers/tweens and restore the clocks (port-risk list)
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.intro?.destroy();
+      this.intro = undefined;
+      this.result?.destroy();
+      this.result = undefined;
+      this.hud.destroy();
+      this.aiPainter.destroy();
+      this.time.timeScale = 1;
+      this.tweens.timeScale = 1;
+    });
+
     // dev hook for inspecting live state from the console
     (window as unknown as { __duel?: DuelScene }).__duel = this;
   }
 
-  /** Dev: snapshot of live combat state. */
+  /** Dev: snapshot of live combat state (browser-verification contract fields). */
   debugState() {
+    const p = this.sim.player;
+    const e = this.sim.opponent;
     return {
-      playerHP: this.player.health,
-      enemyHP: this.enemy.health,
-      focus: Math.round(this.playerFocus.value),
-      enemyState: this.ai.stateName(),
-      dist: Math.round(Math.abs(this.player.x - this.enemy.x)),
+      playerHP: p.hp,
+      enemyHP: e.hp,
+      focus: Math.round(p.focus),
+      enemyState: this.controller.stateName(),
+      dist: Math.round(Math.abs(p.x - e.x)),
+      critical: Math.round(p.critical),
+      invulnRemaining: Math.round(p.invulnMs),
+      shunpoMeter: Math.round(p.shunpo),
+      stances: { player: p.stance, enemy: e.stance },
     };
   }
 
-  private cycleStance() {
-    if (this.over || !this.playerFocus.canSwitch()) return;
-    this.playerFocus.spendSwitch();
-    const order: StanceId[] = ['light', 'balanced', 'heavy'];
-    const i = order.indexOf(this.player.stanceId);
-    this.player.stanceId = order[(i + 1) % order.length];
-    playStanceSwitch();
+  /** Player input is open: FIGHT! landed and the duel has not been decided. */
+  private canAct(): boolean {
+    return this.combatStarted && !this.ended && !this.sim.over;
   }
 
-  /** A horizontal slash: the SMOOTHED stroke is the hit polyline; it damages EVERY foe it crosses
-   *  (HP-based, instakills none at full HP — Tell 5). Blood gouts along the cut vector (Tell 19). */
-  private doSlash(stroke: DrawnStroke) {
-    if (this.time.now < this.busyUntil) return;
-    const stance = STANCES[this.player.stanceId];
-    this.busyUntil = this.time.now + slashRecoveryMs(this.player.stanceId); // per-stance lock (Tell 6)
-    this.player.slash();
-    playSlash();
+  /** FIGHT! lands: unfreeze the sim and start the spawn-invuln blink (Tell 9). */
+  private startCombat(): void {
+    if (this.combatStarted) return;
+    this.combatStarted = true;
+    this.startBlink(-1, this.player);
+    this.foes.forEach((f, i) => this.startBlink(i, f));
+  }
 
-    let anyHit = false;
-    let severedTotal = 0;
-    for (const foe of this.foes) {
-      if (foe.isDead) continue;
-      const input: SlashInput = {
-        path: stroke.points,
-        origin: this.player.slashOrigin(),
-        reach: stance.reach,
-        dmgMult: stance.dmgMult,
-        crit: this.playerFocus.isCrit(),
-        counter: counterBonus(this.player.stanceId, foe.stanceId),
-      };
-      const result = resolveSlash(
-        input,
-        foe.worldLimbs(),
-        this.player.atkPlusWeapon,
-        STANCES[foe.stanceId].damageTakenMult,
-      );
-      this.applyAndSpray(foe, result, stroke.dir);
-      if (result.hits.length && !foe.blocking && !this.inGrace()) {
-        anyHit = true;
-        severedTotal += result.hits.filter((h) => h.severed).length;
+  // ── spawn-invuln blink: started at combat start, stopped by the invulnEnded sim event ──
+
+  private startBlink(key: number, target: Fighter): void {
+    this.blinkTweens.get(key)?.stop();
+    this.blinkTweens.set(
+      key,
+      this.tweens.add({
+        targets: target,
+        alpha: SPAWN_BLINK.alphaLow,
+        duration: SPAWN_BLINK.periodMs,
+        yoyo: true,
+        repeat: SPAWN_BLINK.repeats, // infinite — invulnEnded stops it on the exact sim frame
+      }),
+    );
+  }
+
+  private stopBlink(key: number): void {
+    const tw = this.blinkTweens.get(key);
+    if (tw) {
+      tw.stop();
+      this.blinkTweens.delete(key);
+    }
+    const target = key === -1 ? this.player : this.foes[key];
+    target?.setAlpha(1);
+  }
+
+  // ── sim events → presentation (FX / SFX / anims); NO combat math here ──────────────────
+
+  private attackerStance(actor: Actor): StanceId {
+    return actor === 'player' ? this.sim.player.stance : this.sim.opponent.stance;
+  }
+
+  private targetPuppet(actor: Actor, targetIndex: number): Fighter {
+    if (actor === 'opponent') return this.player;
+    return this.foes[targetIndex] ?? this.enemy;
+  }
+
+  private torsoPoint(f: Fighter): Pt {
+    return { x: f.x, y: f.y - STRIKE_TORSO_OFFSET };
+  }
+
+  private onSimEvent(ev: SimEvent): void {
+    switch (ev.type) {
+      case 'slashStarted':
+        if (ev.actor === 'player') this.player.slash(); // the AI's swing plays at resolution
+        playDraw(ev.stance); // SFX_FIRE_FRAMES.draw = strokeStart (Tell 28)
+        break;
+      case 'hitLanded': {
+        const target = this.targetPuppet(ev.actor, ev.targetIndex);
+        if (ev.actor === 'opponent') this.enemy.slash(); // the telegraphed strike lands now
+        target.hitAnim();
+        if (ev.hits.length) {
+          for (const h of ev.hits) {
+            this.gore.spray(h.cutPoint, h.severed ? BLOOD_COUNT_SEVERED : BLOOD_COUNT, ev.dir);
+            if (h.severed) {
+              target.severed.add(h.limbId);
+              this.gore.severDecal(h.cutPoint);
+              const color =
+                LIMB_COLOR[h.limbId] ?? (target === this.player ? COL.haori : COL.haoriEnemy);
+              this.gore.flyLimb(h.cutPoint, target.facing, color);
+            }
+          }
+        } else {
+          // specials (stab/launch) carry no limb list — blood gouts from the torso along dir
+          this.gore.spray(this.torsoPoint(target), BLOOD_COUNT, ev.dir);
+        }
+        if (ev.actor === 'opponent') playGrunt();
+        playFlesh(this.attackerStance(ev.actor)); // SFX_FIRE_FRAMES.flesh = resolve
+        break;
       }
-    }
-    if (anyHit) {
-      playImpact();
-      this.playerFocus.gain(16 + severedTotal * 10);
-      this.combo.hit(this.time.now);
-    } else {
-      this.combo.reset();
+      case 'critLanded':
+        if (ev.actor === 'player') this.critFlash(); // the visible 3× beat (Tell 7)
+        break;
+      case 'whiffed':
+        if (ev.actor === 'opponent') this.enemy.slash(); // the missed swing still plays
+        playWhiff(this.attackerStance(ev.actor)); // SFX_FIRE_FRAMES.whiff = resolve
+        break;
+      case 'blocked':
+        this.sparkFx.swat(ev.point); // armor-parry spark (s-fx: swat doubles as the block spark)
+        playArmor(this.attackerStance(ev.actor)); // SFX_FIRE_FRAMES.armor = resolve
+        break;
+      case 'stanceSwitched':
+        playStanceSwitch();
+        break;
+      case 'invulnEnded':
+        this.stopBlink(ev.foeIndex); // exact sim frame (Tell 9)
+        break;
+      case 'smokeBombUsed':
+        this.smoke.teleport(ev.fromX, ev.toX); // puff at vanish + reappear (Tell 10)
+        break;
+      case 'deflectSuccess':
+        this.sparkFx.swat(ev.point); // kunai swat flash (Tell 10)
+        playArmor();
+        break;
+      case 'projectileHit': {
+        const victim = ev.actor === 'opponent' ? this.player : this.enemy;
+        victim.hitAnim();
+        if (victim === this.player) playGrunt();
+        break;
+      }
+      case 'chiPunchLanded': {
+        const idx = this.sim.foes.findIndex((f) => f.hp > 0);
+        const victim = ev.actor === 'player' ? (this.foes[idx] ?? this.enemy) : this.player;
+        victim.hitAnim();
+        this.sparkFx.swat(this.torsoPoint(victim)); // impact flash (Tell 12)
+        playFlesh(this.attackerStance(ev.actor));
+        break;
+      }
+      case 'killBeat':
+        this.onKillBeat(ev.winner);
+        break;
+      // polled/painter-covered beats: meters, telegraphs, jumps, shunpo edges
+      case 'telegraphStarted':
+      case 'critReady':
+      case 'stanceSwitchDenied':
+      case 'projectileSpawned':
+      case 'jumpStarted':
+      case 'launchLanded':
+      case 'shunpoStarted':
+      case 'shunpoEnded':
+        break;
     }
   }
 
-  /** Killing-blow sequence (§4 + tells #5a/#8): the loser collapses while a dark pool
-   *  spreads under the corpse and loot tumbles out; after a brief on-field glimpse the
-   *  finisher flash (black silhouettes over flat red, slow-mo) fires, then the §7 KillBeat. */
-  private onKill(playerWon: boolean) {
-    if (this.finishing) return;
-    this.finishing = true;
-    this.over = true;
+  /** Full-screen white pop on a landed 3× crit (config CRIT_FLASH — Tell 7). */
+  private critFlash(): void {
+    const wash = this.add
+      .rectangle(0, 0, GAME_W, GAME_H, CRIT_FLASH.color, CRIT_FLASH.magnitude)
+      .setOrigin(0, 0)
+      .setDepth(CRIT_FLASH.depth);
+    this.tweens.add({
+      targets: wash,
+      alpha: 0,
+      duration: CRIT_FLASH.durationMs,
+      onComplete: () => wash.destroy(),
+    });
+  }
+
+  /** Killing-blow sequence (§4 + tells #5a/#8), fired EXACTLY once by the sim's killBeat:
+   *  collapse glimpse → FinisherFlash (red silhouettes, slow-mo) → KillBeat → result tally. */
+  private onKillBeat(winner: 'player' | 'opponent'): void {
+    if (this.ended) return; // defense-in-depth; the sim already latches killBeat once
+    // presentation clocks back to neutral BEFORE FinisherFlash takes them over
+    this.appliedTimeScale = 1;
+    this.time.timeScale = 1;
+    this.tweens.timeScale = 1;
+    this.ended = true;
+    const playerWon = winner === 'player';
     const loser = playerWon ? this.enemy : this.player;
-    loser.die();
     this.gore.pool({ x: loser.x, y: 0 }); // persists — the pool marks the corpse (tell #8)
     if (playerWon) {
       lootPop(this, { x: loser.x, y: loser.y - DUEL_SCENE.lootChestOffsetY }, GROUND_Y);
@@ -278,164 +494,101 @@ export class DuelScene extends Phaser.Scene {
       }));
       new FinisherFlash(this).play(sils, {
         groundY: GROUND_Y,
-        onDone: () => new KillBeat(this).play(playerWon),
+        onDone: () => {
+          new KillBeat(this).play(playerWon);
+          this.time.delayedCall(DUEL_SCENE.resultDelayMs, () => this.showResult(playerWon));
+        },
       });
     });
   }
 
-  /** Direction = verb (spec §D.1): horizontal→slash, up→jump, big-up→launch, down→stab. */
-  private handleGesture(stroke: DrawnStroke) {
-    if (this.over || this.time.now < this.busyUntil) return;
-    switch (stroke.verb) {
-      case 'slash':
-        this.doSlash(stroke);
-        break;
-      case 'jump':
-        this.doJump(stroke);
-        break;
-      case 'launch':
-        this.dealSpecial(LAUNCH_DMG_MULT, LAUNCH_KNOCKUP, { x: 0, y: -1 });
-        break;
-      case 'stab':
-        this.dealSpecial(STAB_DMG_MULT, 0, { x: this.player.facing, y: 0 });
-        break;
-    }
-  }
-
-  /** Jump arc — BEGINS at the line's start point, ENDS at its endpoint (Tell 4). */
-  private doJump(stroke: DrawnStroke) {
-    this.busyUntil = this.time.now + JUMP_MS;
-    const clampX = (x: number) => Phaser.Math.Clamp(x, ARENA_MARGIN, GAME_W - ARENA_MARGIN);
-    const from: Pt = { x: clampX(stroke.start.x), y: GROUND_Y };
-    const to: Pt = { x: clampX(stroke.end.x), y: GROUND_Y };
-    const st = { t: 0 };
-    this.tweens.add({
-      targets: st,
-      t: 1,
-      duration: JUMP_MS,
-      onUpdate: () => {
-        const p = jumpArcPoint(from, to, JUMP_APEX, st.t);
-        this.player.x = p.x;
-        this.player.y = p.y;
-      },
-      onComplete: () => {
-        this.player.x = to.x;
-        this.player.y = GROUND_Y;
-      },
+  /** Victory/Defeat tally (Tell 25) — display-only values, economy math is M3. */
+  private showResult(playerWon: boolean): void {
+    this.result = new DuelResult(this, {
+      victory: playerWon,
+      xp: playerWon ? KILL_REWARD.xpPerFoeLevel : 0,
+      coins: playerWon ? KILL_REWARD.coinsPerFoeLevel : 0,
+      onContinue: () => this.scene.restart(),
     });
   }
 
-  /** A close-range special move (launch / stab): connects if the enemy is within reach. */
-  private dealSpecial(mult: number, knockUp: number, dir: Pt) {
-    this.busyUntil = this.time.now + SPECIAL_MS;
-    this.player.slash();
-    playSlash();
+  // ── per-frame: intents in → sim advance → events out → puppets/HUD mirror sim ──────────
 
-    const stance = STANCES[this.player.stanceId];
-    if (Math.abs(this.enemy.x - this.player.slashOrigin().x) > stance.reach) return;
-    if (this.enemy.blocking) {
-      this.spark({ x: this.enemy.x, y: this.enemy.y - 46 });
-      return;
-    }
-    const crit = this.playerFocus.isCrit();
-    const base =
-      this.player.atkPlusWeapon *
-      stance.dmgMult *
-      mult *
-      (crit ? CRIT_MULT : 1) * // CONTRACT 3× (was a stray 1.3× here — DIVERGENCES.md)
-      counterBonus(this.player.stanceId, this.enemy.stanceId);
-    const dmg = Math.round(base * STANCES[this.enemy.stanceId].damageTakenMult);
-    this.enemy.health = Math.max(0, this.enemy.health - dmg);
-    this.enemy.redraw();
-    this.gore.spray({ x: this.enemy.x, y: this.enemy.y - 46 }, BLOOD_COUNT, dir);
-    playImpact();
-    this.playerFocus.gain(14);
-    if (knockUp > 0) {
-      this.tweens.add({ targets: this.enemy, y: this.enemy.y - knockUp, duration: 240, yoyo: true, ease: 'Quad.easeOut' });
-    }
-  }
-
-  private inGrace() {
-    return this.time.now < this.graceUntil;
-  }
-
-  /** Apply a slash result to a fighter and spray blood / sever decals for each hit, along `dir`. */
-  private applyAndSpray(target: Fighter, result: SlashResult, dir: Pt) {
-    if (!result.hits.length) return;
-    if (target.blocking || this.inGrace()) {
-      this.spark(result.hits[0].cutPoint);
-      return;
-    }
-    target.applyHit(result);
-    for (const h of result.hits) {
-      this.gore.spray(h.cutPoint, h.severed ? BLOOD_COUNT_SEVERED : BLOOD_COUNT, dir);
-      if (h.severed) {
-        this.gore.severDecal(h.cutPoint);
-        const color = LIMB_COLOR[h.limbId] ?? (target === this.player ? COL.haori : COL.haoriEnemy);
-        this.gore.flyLimb(h.cutPoint, target.facing, color);
-      }
-    }
-  }
-
-  /** The enemy's strike at the player (a heavy lunge); misses if the player retreated out of reach. */
-  private enemyStrike() {
-    if (this.over || this.inGrace()) return;
-    const stance = STANCES[this.enemy.stanceId];
-    if (Math.abs(this.player.x - this.enemy.x) > stance.reach + 30) return;
-    const base = this.enemy.atkPlusWeapon * stance.dmgMult * counterBonus(this.enemy.stanceId, this.player.stanceId);
-    const dmg = Math.round(base * STANCES[this.player.stanceId].damageTakenMult);
-    this.player.health = Math.max(0, this.player.health - dmg);
-    this.player.hitAnim();
-    this.player.redraw();
-    // blood gouts away from the attacker (along the enemy→player vector)
-    this.gore.spray({ x: this.player.x, y: this.player.y - 46 }, BLOOD_COUNT, { x: this.player.x - this.enemy.x, y: 0 });
-    playImpact();
-    playGrunt();
-  }
-
-  /** A short white block-clink flash. */
-  private spark(at: { x: number; y: number }) {
-    const s = this.add.graphics().setDepth(70);
-    s.fillStyle(0xffffff, 1).fillCircle(at.x, at.y, 6);
-    this.tweens.add({
-      targets: s,
-      scale: 2.4,
-      alpha: 0,
-      duration: 180,
-      onComplete: () => s.destroy(),
+  private buildIntent() {
+    let move = 0;
+    if (this.keys.left.isDown) move -= 1;
+    if (this.keys.right.isDown) move += 1;
+    return this.intents.drain({
+      move: move as -1 | 0 | 1,
+      shunpoHold: this.keys.shift.isDown, // SHIFT hold = Shunpo (Tell 16)
     });
+  }
+
+  /** Copy sim state onto a render puppet (render never writes back — port contract). */
+  private syncPuppet(puppet: Fighter, f: FighterSimState): void {
+    puppet.x = f.x;
+    puppet.y = f.y;
+    puppet.facing = f.facing;
+    puppet.scaleX = f.facing;
+    puppet.stanceId = f.stance;
+    puppet.blocking = f.blocking;
+    if (puppet.health > 0 && f.hp <= 0) puppet.die(); // death anim exactly once per puppet
+    puppet.health = f.hp;
+  }
+
+  /** Sim-owned slow-mo (Shunpo) onto the presentation clocks — tweens AND timers together,
+   *  skipped once the kill sequence starts (FinisherFlash owns the clocks then). */
+  private applyPresentationScale(scale: number): void {
+    if (this.ended || scale === this.appliedTimeScale) return;
+    this.appliedTimeScale = scale;
+    this.time.timeScale = scale;
+    this.tweens.timeScale = scale;
   }
 
   update(_time: number, delta: number) {
-    if (!this.finishing && (this.enemy.isDead || this.player.isDead)) {
-      this.onKill(this.enemy.isDead);
+    const simScale = this.sim.timeScale; // 1, or SHUNPO_TIMESCALE while slow-mo is active
+    const dt = (Number.isFinite(delta) ? delta : 0) * simScale;
+
+    let events: SimEvent[] = [];
+    if (this.combatStarted && !this.sim.over) {
+      events = this.sim.advance(dt, this.buildIntent()); // pre-scaled feed (port contract)
     }
 
-    let playerMoving = false;
-    let enemyMoving = false;
+    // mirror sim → puppets, then let the events dress the new frame
+    this.syncPuppet(this.player, this.sim.player);
+    this.sim.foes.forEach((f, i) => {
+      const puppet = this.foes[i];
+      if (puppet) this.syncPuppet(puppet, f);
+    });
+    for (const ev of events) this.onSimEvent(ev);
+    this.applyPresentationScale(this.sim.timeScale);
 
-    if (!this.over) {
-      let dir = 0;
-      if (this.keys.left.isDown) dir -= 1;
-      if (this.keys.right.isDown) dir += 1;
-      this.player.x = Phaser.Math.Clamp(this.player.x + dir * MOVE_SPEED * delta, ARENA_MARGIN, GAME_W - ARENA_MARGIN);
-      playerMoving = dir !== 0;
-
-      this.player.facing = this.enemy.x >= this.player.x ? 1 : -1;
-      this.player.scaleX = this.player.facing;
-
-      this.ai.update(delta);
-      enemyMoving = this.ai.stateName() === 'approach';
-      this.trail.update(delta);
-    }
-
+    this.kunai.sync(this.sim.projectiles, this.sim.tFixed); // sim is the kunai authority
+    this.trail.update(dt);
     // parallax + secondary motion keep breathing through the kill sequence
-    this.biome.update(delta, this.player.x);
+    this.biome.update(dt, this.player.x);
 
-    // animate every fighter each frame (incl. the death fall while finishing); dummies idle in place
-    this.player.update(delta, playerMoving);
-    this.enemy.update(delta, enemyMoving);
-    for (const f of this.foes) if (f !== this.enemy) f.update(delta, false);
-    this.hud.update(this.combo.value(this.time.now));
+    // animate every fighter each frame (incl. the death fall while finishing)
+    const opp = this.sim.opponent;
+    const playerMoving = this.canAct() && !this.intentsIdle();
+    this.player.update(dt, playerMoving);
+    this.enemy.update(dt, !this.ended && this.controller.stateName() === 'approach');
+    for (const f of this.foes) if (f !== this.enemy) f.update(dt, false);
+    this.aiPainter.update(
+      {
+        x: opp.x,
+        y: opp.y,
+        windupMs: opp.windupMs,
+        pendingSmokeMs: opp.pendingSmokeMs,
+        blocking: opp.blocking,
+      },
+      dt,
+    );
+    this.hud.update();
+  }
+
+  /** True when no walk key is held (walk-cycle flag only — the sim reads the real intent). */
+  private intentsIdle(): boolean {
+    return !this.keys.left.isDown && !this.keys.right.isDown;
   }
 }

@@ -80,15 +80,70 @@ is logged here.
   original overflow chaos test only checked `dir`/`verb`); the test now asserts the full
   finite-points/finite-length invariant, and the guard is proven by reverting it (test goes red).
 
+## M2 — Sim combat port + integration decisions (2026-07-05)
+
+- **Shunpo is bound to SHIFT-hold, not SPACE.** SPACE is contractually the stance swap
+  (Tell 8 / spec §D.4: "Space/portrait-click swaps stance and drains Focus"); SHS2 —
+  where Shunpo is confirmed — used SPACEBAR. Divergence intentional, mechanics identical:
+  hold SHIFT for the slow-mo burst (drains the power meter, ends on release or empty),
+  press SPACE / click the portrait to swap stance.
+
+- **Spawn grace `1500ms` → `SPAWN_INVULN_MS` 5000 (CONTRACT, Tell 9).** The pre-port scene
+  used an INFERRED 1.5 s `graceUntil`; the contract is **5 s OR until first slash**, now
+  computed in `core/Sim` (`invulnMs`/`hasSlashed`). The blink tween is presentation-only:
+  it starts when FIGHT! lands and is stopped by the sim's `invulnEnded` event, so the blink
+  ends on the exact sim frame (timeout *or* first slash). Related core decision (sim-port):
+  invuln is cleared by any **first offensive act** (slash/stab/launch/chiPunch/projectile) —
+  a superset of "first slash"; you attack, you lose protection.
+
+- **Player strikes now wind up `PLAYER_WINDUP_MS` (360 ms) before resolving.** Port of the
+  pre-port `playerWindupUntil = now + 360` (which only fed the AI's reaction check) into a
+  real sim windup: the strike damage lands when `windupMs` expires, not on gesture end.
+  This changes the M1 instant-hit feel and is what makes the AI's react-block/dodge and the
+  telegraph measures provable in core tests. Flagged for the main-loop feel pass.
+
+- **`DuelScene` is now render-only (the §1.C mandate landed).** All combat math — damage,
+  Focus, Critical (+weapon-weight drain, 3× crit), stance triangle, spawn invuln, Smoke
+  Bomb i-frames, Stab+Deflect, Chi Punch, projectiles, Shunpo, and the kill latch — runs in
+  `core/Sim`; the scene builds `PlayerIntent` from input, feeds `advance(delta ×
+  sim.timeScale)`, drains `SimEvent`s into FX/SFX, and copies sim state onto render puppets
+  (`Fighter` never writes back; gameplay tweens deleted — jump/knock-up arcs are sim-computed).
+  `game/ai/AIController` shrank to a telegraph-caret/pose painter; decisions live in
+  `core/AISeamController` behind the seam with an injected mulberry32 rng (`Math.random`
+  removed from the AI path). Sim rng seed comes from `?seed=` (dev) or `Date.now()` —
+  wall-clock is allowed in `game/`, never in `core/`.
+
+- **`OpponentIntent.throwProjectile` is design-for-test.** No Duels footage shows the duel
+  opponent throwing kunai at this tier; the intent exists so the Stab+Deflect measure (Tell
+  10) is provable through the seam (ScriptedController throws, the stab pose swats). The AI
+  tiers may adopt it later; it is not reachable from the player's input map.
+
+- **Duel framing wiring (Tell 25).** The sim is frozen until `DuelIntro`'s FIGHT! lands
+  (`onFight` = the unfreeze; spawn-invuln starts counting there), any click fast-forwards
+  the intro, and gesture strokes begun before FIGHT! are discarded (the skip click can
+  never clear invuln or queue a slash). `DuelResult` mounts `DUEL_SCENE.resultDelayMs`
+  after the KillBeat anatomy and shows `KILL_REWARD` values at foe level 1 (display-only —
+  the economy tally math is M3); defeat shows 0/0.
+
+- **Presentation slow-mo follows the sim.** The scene applies `sim.timeScale` (Shunpo) to
+  `time.timeScale` AND `tweens.timeScale` together, restores both on the kill beat (before
+  FinisherFlash takes the clocks), on scene shutdown, and in `create()` — an R-restart mid
+  slow-mo can never leak a stuck timescale into the next duel (port-risk list).
+
+- **`SPAWN_BLINK.repeats = -1` (infinite).** The contract sketched `{periodMs, repeats,
+  alphaLow}`; pre-counting cycles would drift from the "ends on first slash" half, so the
+  blink repeats until the `invulnEnded` event stops it — the key is kept (honoring the
+  contract shape) but pinned to infinite.
+
 ## Deferred to later milestones (seeded now, built later)
 
-- **Full §A.1 damage formula.** `core/slash.ts` currently applies
+- **(LANDED in M2) Full §A.1 damage formula.** `core/slash.ts` currently applies
   `(Attack+Weapon) · dmgMult · crit · counter · defenderDamageTakenMult · severedBonus`.
   The spec's full formula adds the `(1 − Defense·DEF_K)` defense term and a
   `defenderCounterPenalty` divisor. `DEF_K = 0.01` and the structure are seeded in
   `config/combat.ts`; wiring the defense term into the resolver is **M2 (full combat)**.
 
-- **`Sim` is the minimal M0 seam.** It owns the fixed-60 Hz deterministic tick, consumes
+- **(LANDED in M2 — see the M2 section above) `Sim` is the minimal M0 seam.** It owns the fixed-60 Hz deterministic tick, consumes
   `OpponentIntent` without branching on controller type, and applies stance-switch + a landed
   slash. Its `advance()` clamps catch-up time to `MAX_FRAME_MS` (250) and ignores
   NaN/Infinity/non-positive frames — the spiral-of-death guard the accumulator pattern requires

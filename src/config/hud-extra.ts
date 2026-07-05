@@ -4,6 +4,9 @@
 // stub data) the redrawn chrome needs. Every value is INFERRED (survey) — read off the
 // §5/§6 reference frames at 1024×576, ±JPEG error — unless marked otherwise.
 // NOT in the config barrel (index.ts is frozen): import from '../../config/hud-extra'.
+import { COL } from './palette';
+import { HUD_EXPLORE, HUD_COMBAT } from './layout';
+import type { StanceId } from './stances';
 
 /** Int color → CSS hex string for Phaser Text styles (config-side so game/ stays literal-free). */
 export const hexCss = (n: number): string => `#${n.toString(16).padStart(6, '0')}`;
@@ -182,4 +185,112 @@ export const HUD_FAKE = {
   location: 'W KASUTA FOREST', // location banner stub
   quest: 'STORY QUEST: SPEAK TO THE RONIN AT THE DOJO', // quest tracker stub
   stance: 'HEAVY', // INFERRED (survey §5) — default stance caps
+} as const;
+
+// ————————————————————————————————————————————————————————————————————————————
+// M2 §3 items 8 + 23* — combat-HUD interactive pieces (owner: s-hud).
+// Geometry derives from the frozen layout.ts rects so a stage recalibration moves
+// everything together; colors reference config/palette COL keys (color-refs only).
+// ————————————————————————————————————————————————————————————————————————————
+
+// Skill bar: THE single slot → skill-id + key-hint mapping source (frozen port
+// contract). Slot N fires SKILL_VERB[N] in the sim (config/combat-sim.ts) — the
+// ids here are index-aligned with that map and must stay so.
+export const SKILL_SLOTS = [
+  { id: 'chiPunch', key: '1' },
+  { id: 'smokeBomb', key: '2' },
+  { id: 'stab', key: '3' },
+] as const;
+export type SkillId = (typeof SKILL_SLOTS)[number]['id'];
+
+// Derived per-slot rects (same right-anchored row math the M1 chrome drew) —
+// shared by the chrome painter, the interactive hit zones, and cooldown overlays.
+const SS = HUD_COMBAT.skillSlots;
+export const SKILL_SLOT_RECTS: ReadonlyArray<{ x: number; y: number; w: number; h: number }> =
+  SKILL_SLOTS.map((_, i) => ({
+    x: SS.endX - (SS.count - i) * SS.size - (SS.count - 1 - i) * SS.gap,
+    y: SS.y,
+    w: SS.size,
+    h: SS.size,
+  }));
+
+// Critical bar — the combat "third bar" (§6), stacked under the HP/Chi pair.
+// Fill fraction = FighterSimState.critical / CRITICAL_MAX (polled, Tell 7).
+const BARS = HUD_EXPLORE.bars;
+export const HUD_CRIT_BAR = {
+  x: BARS.x,
+  y: BARS.y + (BARS.h + BARS.gap) * 2, // third row of the bar stack — INFERRED (§6 "third bar appears")
+  w: BARS.w,
+  h: BARS.h,
+  fill: COL.gold, // charging fill
+  readyFill: COL.bladeEdge, // near-white "charged" fill once crit-ready
+  glowColor: COL.nameGold, // pulsing ready-glow ring (critReady HUD glow)
+  labelDx: 6, // INFERRED — "CRITICAL" caps gap right of the bar
+  readyPulseMs: 640, // INFERRED — ready-glow pulse period
+  glowAlphaMin: 0.3, // INFERRED — pulse alpha floor
+  glowAlphaMax: 0.9, // INFERRED — pulse alpha peak
+  glowPad: 3, // INFERRED — glow ring outset
+} as const;
+
+// Shunpo power meter (SHS2 heritage, Tell 16) — slim strip above the portrait.
+// Fill fraction = FighterSimState.shunpo / SHUNPO_MAX (polled).
+const PORTRAIT = HUD_EXPLORE.portrait;
+export const HUD_SHUNPO_BAR = {
+  x: PORTRAIT.x,
+  y: PORTRAIT.y - 12, // INFERRED — clears the portrait frame top
+  w: PORTRAIT.w,
+  h: 6, // INFERRED — slim power strip
+  fill: COL.mistTeal,
+  activeFill: COL.bladeChi, // brighter while the slow-mo burst is on
+} as const;
+
+// Stance portrait interactive zone (Tell 8/23*: click-to-swap) = the portrait frame.
+export const STANCE_PORTRAIT_HIT = {
+  x: PORTRAIT.x,
+  y: PORTRAIT.y,
+  w: PORTRAIT.w,
+  h: PORTRAIT.h,
+} as const;
+
+// Stance identity colors on the portrait (inner rim + bottom tab) — our own coding,
+// consistent with the arc palette (light=chi blue, balanced=gold, heavy=red).
+export const HUD_STANCE_COLORS: Record<StanceId, number> = {
+  light: COL.bladeChi,
+  balanced: COL.nameGold,
+  heavy: COL.winRed,
+};
+export const HUD_STANCE_MARK = {
+  rimW: 2, // stance-colored inner rim stroke
+  rimAlpha: 0.85, // INFERRED
+  tabH: 5, // INFERRED — colored tab along the portrait bottom edge
+  tabAlpha: 0.9, // INFERRED
+} as const;
+
+// Interactive feedback: hover ring / press flash / disabled + cooldown overlays.
+export const HUD_INTERACT = {
+  ringW: 2, // hover/press ring stroke
+  ringPad: 2, // ring outset from the hit rect
+  hoverAlpha: 0.35, // INFERRED — hover ring alpha
+  pressAlpha: 0.85, // INFERRED — press-flash ring alpha
+  pressFlashMs: 140, // INFERRED — press-flash duration
+  cooldownAlpha: 0.65, // INFERRED — top-down cooldown wipe overlay alpha
+  disabledAlpha: 0.55, // INFERRED — disabled-slot dim overlay alpha
+} as const;
+
+// Skill-slot vector glyphs (own expression — §6 slots carry item icons; sizes at slot scale).
+export const HUD_SKILL_GLYPH = {
+  alpha: 0.92,
+  chiCoreR: 7, // chi-punch burst disc
+  chiRingR: 11, // chi-punch shock ring
+  puffR: 6, // smoke-bomb puff lobes
+  puffDx: 6,
+  puffDy: 4,
+  bladeW: 7, // stab: downward blade triangle
+  bladeH: 20,
+  guardW: 15, // stab: crossguard
+  guardH: 3,
+  chiColor: COL.bladeChi,
+  smokeColor: COL.blade,
+  stabColor: COL.bladeEdge,
+  guardColor: COL.goldTrim,
 } as const;

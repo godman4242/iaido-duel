@@ -19,8 +19,11 @@ export const FX_DEPTH = {
   decal: 5, // sever splats (existing layer)
   loot: 39, // loot sits with the corpses, just under the blood emitter
   bloodEmitter: 40, // existing
+  projectile: 44, // M2: kunai fly on the fighters' plane, under limbs/trails
   limb: 45, // existing
+  smoke: 48, // M2: smoke-bomb puffs cover the vanishing fighter, under the blade trail
   bladeTrail: 50, // existing
+  deflectSpark: 52, // M2: the swat flash reads over the blade trail (Tell 10)
   finisher: 150, // finisher flash covers world + HUD(100) + credits(120), below KillBeat
   killWash: 190, // existing KillBeat layers
   killGround: 191,
@@ -171,6 +174,87 @@ export const WIN_LAYOUT = {
   titleJitterY: 5, // ± px per-letter baseline wobble (irregular baseline, §8)
   letterPad: 2, // extra tracking between letters, px
   spaceW: 26, // advance for the word gap, px
+} as const;
+
+// ── M2 §3.5 Smoke Bomb puff (game/vfx/SmokePuff.ts) — burst at the vanish point + a smaller
+// reappear poof at the destination (blueprint Tell 10; smokeBombUsed event carries both x).
+// All INFERRED — Ruffle frame-step may overwrite counts/timing (CALIBRATION §5).
+export const SMOKE_PUFF = {
+  key: 'smoke-dot', // generated soft-dot particle texture
+  texSize: 32, // texture size, px
+  rings: 4, // concentric alpha rings in the soft dot (fake radial gradient)
+  ringAlpha: 0.3, // alpha added per ring toward the center
+  white: 0xffffff, // untinted base so emitter tints read true (BLOOD_DOT precedent)
+  particleCount: 14, // INFERRED — burst cloud at the vanish point
+  reappearCount: 8, // INFERRED — smaller poof at the destination
+  maxPerBurst: 32, // hard cap per burst (hostile-count chaos guard)
+  riseMs: 560, // INFERRED — particle lifespan: the cloud swells, rises, thins out
+  radius: 22, // emit-zone jitter radius around the puff center, px
+  speedMin: 18, // px/s drift speed range
+  speedMax: 74,
+  angleMin: 195, // upward fan, degrees (270 = straight up in Phaser)
+  angleMax: 345,
+  gravityY: -66, // px/s² — negative: smoke rises
+  scaleStart: 0.5, // puffs expand as they thin
+  scaleEnd: 1.5,
+  alphaStart: 0.85,
+  centerYOffset: 58, // puff center height above the ground line, px (body center)
+  tintLight: 0xd9d9d2, // INFERRED — pale smoke
+  tintDark: 0x8f9188, // INFERRED — shadow smoke
+} as const;
+
+// ── M2 §3.6 kunai render (game/vfx/ProjectileView.ts) — mirrors SimState.projectiles;
+// the sim is the position authority (x), the view only paints. Shape drawn nose → +x.
+export const PROJECTILE_VIEW = {
+  shaftLen: 22, // kunai shaft length, px
+  shaftW: 3, // shaft stroke width, px
+  tipLen: 9, // blade-tip triangle length past the shaft, px
+  tipHalfW: 4, // blade-tip half-width, px
+  ringR: 3, // tail pommel-ring radius, px
+  outlinePad: 2, // black ink outline pad (house style)
+  wobbleDeg: 6, // in-flight nose wobble amplitude, ± degrees
+  wobbleHz: 9, // wobble frequency, cycles/s (deterministic from sim tFixed)
+  blade: COL.blade, // steel body
+  outline: COL.outline, // ink outline
+} as const;
+
+// ── M2 §3.6 deflect swat spark (game/vfx/DeflectSpark.ts) — contract keys flashMs/ringR.
+// White core + expanding ring + radial tick sparks where the kunai was swatted (Tell 10).
+export const DEFLECT_SWAT = {
+  flashMs: 170, // INFERRED — spark lifetime, ms
+  ringR: 34, // expanding ring radius at death, px
+  ringStartR: 8, // ring radius at birth, px
+  ringW: 3, // ring stroke width, px
+  sparkCount: 6, // radial tick marks
+  sparkLenMin: 9, // tick length range, px
+  sparkLenMax: 17,
+  sparkW: 2.5, // tick stroke width, px
+  sparkTravel: 14, // px a tick's base slides outward over the flash
+  coreR: 7, // white core flash radius, px
+  coreAlpha: 0.95,
+  core: 0xffffff, // core flash — pure white pop
+  color: COL.bladeEdge, // ring + ticks — bright steel
+} as const;
+
+// ── M2 §3.4 spawn-invuln blink (Tell 9) — integrate-owned glue (contract fx-extra key).
+// The blink tween starts when combat starts and is STOPPED by the sim's invulnEnded event
+// (timeout or first slash), so the blink ends exactly on the sim frame; `repeats: -1`
+// (infinite) leans on that event rather than pre-counting cycles. All INFERRED (M1 feel:
+// 150ms yoyo to 0.35 alpha, carried from the pre-port DuelScene blink).
+export const SPAWN_BLINK = {
+  periodMs: 150, // one alpha dip (yoyo doubles it per cycle)
+  alphaLow: 0.35, // dip floor
+  repeats: -1, // infinite — the invulnEnded sim event stops the tween exactly on time
+} as const;
+
+// ── M2 §3.1/§3.7 crit flash (Tell 7) — the visible 3× beat on critLanded (contract key
+// CRIT_FLASH{magnitude,durationMs}). A full-screen white wash under the HUD that fades out.
+// All INFERRED — Ruffle frame-step calibration may overwrite (CALIBRATION §5).
+export const CRIT_FLASH = {
+  magnitude: 0.45, // wash peak alpha
+  durationMs: 160, // fade-out duration, ms
+  color: 0xffffff, // white pop
+  depth: 95, // over the arena/FX (deflectSpark 52), under the HUD (100)
 } as const;
 
 // ── title + lose-variant colors (KillBeat) ───────────────────────────────────────────────
